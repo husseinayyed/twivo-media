@@ -1,0 +1,10 @@
+### PING
+GET http://localhost:8080/ping
+
+### UPLOAD AN IMAGE
+@key = key
+POST http://localhost:8080/upload
+Content-Type: image/png
+X-TWIVO-BACKEND: {{key}}
+
+< photo.png
