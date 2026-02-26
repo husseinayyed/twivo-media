@@ -66,7 +66,7 @@ It provides:
 sudo apt-get install build-essential cmake libssl-dev libwebp-dev redis-server capnproto libcapnp-dev
 
 Build
-git clone [https://github.com/husseinayyed/twivo-media.git](https://github.com/husseinayued/twivo-media.git)
+git clone https://github.com/husseinayued/twivo-media.git
 cd twivo-media
 
 mkdir build && cd build
@@ -93,7 +93,7 @@ twivo-media/
 ---
 
 # Author
-- ** husseinayyed **
+- **husseinayyed**
 
 ---
 # 📜 License
