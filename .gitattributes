@@ -1,0 +1,5 @@
+include/c/** linguist-vendored
+external/** linguist-vendored
+
+include/c/*.c linguist-vendored
+external/*.c linguist-vendored
