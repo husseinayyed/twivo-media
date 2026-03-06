@@ -1,0 +1,10 @@
+{
+  "name": "twivomedia",
+  "version": "1.0.0",
+  "dependencies": [
+    "hiredis",
+    "redis-plus-plus",
+    "uwebsockets",
+    "libwebp"
+  ]
+}
