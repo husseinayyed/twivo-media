@@ -1,6 +1,7 @@
 #include "ImageProcessor.hpp"
 #include "ImageType.hpp"
 #include "TokenVerifier.hpp"
+#include "jwt-cpp/jwt.h"
 #include "uuid_v4.h"
 #include <cstddef>
 #include <cstdlib>
@@ -12,6 +13,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <string_view>
 #include <sw/redis++/redis++.h>
 #include <sw/redis++/redis.h>
 #include <uwebsockets/App.h>
@@ -26,6 +28,7 @@ constexpr size_t MAX_UPLOAD_SIZE =
     static_cast<size_t>(10 * 1024 * 1024); // 10 MB
 static Redis redis("tcp://127.0.0.1:6379");
 Redis *redisPtr = &redis;
+
 auto readPublicKey() -> string {
   ifstream f("../twivo-backend.pem");
   if (!f.is_open()) {
@@ -161,125 +164,149 @@ auto main() -> int {
       return;
     }
 
-    auto userId = make_shared<string>(
-        verifyUploadImageGetUserId(token, pubKey, *redisPtr));
-    if (userId->empty()) {
-      res->writeStatus("401 Unauthorized")->end("Invalid or expired token");
-      return;
+    auto decodedOpt = verifyUploadImageGetUserId(token, pubKey, *redisPtr);
+    if (!decodedOpt.has_value()) {
+        res->writeStatus("401 Unauthorized")->end("Invalid or expired token");
+        return;
     }
 
+    const auto& decoded = decodedOpt.value();
+
+    // --- Check subject (sub) claim ---
+    if (!decoded.has_subject()) {
+        res->writeStatus("401 Unauthorized")->end("Missing user identifier (sub)");
+        return;
+    }
+    auto userId = decoded.get_subject();
+
+    // --- Safe extraction of "id" claim ---
+    if (!decoded.has_payload_claim("id")) {
+        res->writeStatus("401 Unauthorized")->end("Missing id claim");
+        return;
+    }
+    string twiId;
+    try {
+        twiId = decoded.get_payload_claim("id").as_string();
+    } catch (const std::bad_cast& e) {
+        cerr << "Invalid type for id claim: " << e.what() << "\n";
+        res->writeStatus("401 Unauthorized")->end("Invalid id claim type");
+        return;
+    }
+    // ------------------------------------
+
     auto totalSize = make_shared<size_t>(0);
-    auto buffer =
-        make_shared<vector<unsigned char>>(); // vector for binary data
+    auto buffer = make_shared<vector<unsigned char>>();
     auto fileType = make_shared<ImageType>(ImageType::UNKNOWN);
 
-    res->onData([res, buffer, fileType, totalSize, userId,
-                 &uuidGenerator](string_view chunk, bool isLast) mutable {
-      *totalSize += chunk.size();
+    // Capture userId and twiId by value
+    res->onData([res, buffer, fileType, totalSize, userId, twiId, &uuidGenerator](string_view chunk, bool isLast) mutable {
+        *totalSize += chunk.size();
 
-      // Reject large uploads
-      if (*totalSize > MAX_UPLOAD_SIZE) {
-        res->end("File too large");
-        return;
-      }
-
-      // Append chunk to buffer
-      buffer->insert(buffer->end(), chunk.begin(), chunk.end());
-
-      // Detect image type on first chunk
-      if (buffer->size() >= magicbytes && *fileType == ImageType::UNKNOWN) {
-        *fileType = getImageType(static_cast<const char *>(static_cast<const void *>(buffer->data())),
-                                 buffer->size());
-        if (*fileType == ImageType::UNKNOWN) {
-          res->end("Invalid image format");
-          return;
-        }
-      }
-
-      if (isLast) {
-        if (*fileType == ImageType::UNKNOWN) {
-          res->end("Invalid or unsupported image");
-          return;
+        // Reject large uploads
+        if (*totalSize > MAX_UPLOAD_SIZE) {
+            res->end("File too large");
+            return;
         }
 
-        // Create directories
-        auto dir = fs::path("../media");
-        fs::create_directories(dir);
+        // Append chunk to buffer
+        buffer->insert(buffer->end(), chunk.begin(), chunk.end());
 
-        // Create nested directories from userId
-        const string sub1 = userId->substr(0, 2);
-        const string sub2 = userId->substr(2, 4);
-        const string sub3 = userId->substr(4);
-
-        // Build the full directory path
-        auto fullDir = dir / sub1 / sub2 / sub3;
-
-        // Create all nested directories
-        error_code ec;
-        fs::create_directories(fullDir, ec);
-        if (ec) {
-          cerr << "Failed to create directories: " << ec.message() << "\n";
-          res->writeStatus("500 Internal Server Error")
-              ->end("Failed to create storage directory");
-          return;
+        // Detect image type on first chunk
+        if (buffer->size() >= magicbytes && *fileType == ImageType::UNKNOWN) {
+            *fileType = getImageType(static_cast<const char *>(static_cast<const void *>(buffer->data())),
+                                     buffer->size());
+            if (*fileType == ImageType::UNKNOWN) {
+                res->end("Invalid image format");
+                return;
+            }
         }
 
-        // Process image: resize + WebP conversion
-        auto processed =
-            ImageProcessor::loadResizeWebP(buffer->data(), buffer->size());
+        if (isLast) {
+            if (*fileType == ImageType::UNKNOWN) {
+                res->end("Invalid or unsupported image");
+                return;
+            }
 
-        if (!processed) {
-          res->end("Failed to process image");
-          return;
+            // Create directories
+            auto dir = fs::path("../media");
+            fs::create_directories(dir);
+
+            // Use userId as string, not pointer
+            const string sub1 = userId.substr(0, 2);
+            const string sub2 = userId.substr(2, 4);
+            const string sub3 = userId.substr(4);
+
+            // Build the full directory path
+            auto fullDir = dir / sub1 / sub2 / sub3;
+
+            // Create all nested directories
+            error_code ec;
+            fs::create_directories(fullDir, ec);
+            if (ec) {
+                cerr << "Failed to create directories: " << ec.message() << "\n";
+                res->writeStatus("500 Internal Server Error")
+                    ->end("Failed to create storage directory");
+                return;
+            }
+
+            // Process image: resize + WebP conversion
+            auto processed = ImageProcessor::loadResizeWebP(buffer->data(), buffer->size());
+
+            if (!processed) {
+                res->end("Failed to process image");
+                return;
+            }
+
+            // Generate UUID using the library
+            const auto uuid = uuidGenerator.getUUID().str();
+            const string filename = (fullDir / (uuid + ".webp")).string();
+            const string filepath = (fs::path(sub1) / sub2 / sub3 / (uuid + ".webp")).string();
+            ofstream file(filename, ios::binary);
+            if (!file.is_open()) {
+                res->end("Failed to save file");
+                return;
+            }
+
+            file.write(reinterpret_cast<const char *>(processed->webpData.data()),
+                       processed->webpData.size());
+            file.close();
+
+            string orientation_str;
+            switch (processed->orientation) {
+                case ImageOrientation::HORIZONTAL:
+                    orientation_str = "horizontal";
+                    break;
+                case ImageOrientation::VERTICAL:
+                    orientation_str = "vertical";
+                    break;
+                case ImageOrientation::SQUARE:
+                    orientation_str = "square";
+                    break;
+                default:
+                    orientation_str = "unknown";
+            }
+
+            // Use twiId and userId directly (they are strings)
+            vector<pair<string, string>> fields = {
+                {"id", twiId},
+                {"user_id", userId},
+                {"path", filepath},
+                {"orientation", orientation_str}
+            };
+
+            // Add to Redis stream
+            redis.xadd("uploads:stream", "*", fields.begin(), fields.end());
+
+            cout << "Upload event published for user: " << userId << "\n";
+            res->end("Upload successful");
         }
-
-        // Generate UUID using the library
-        const auto uuid = uuidGenerator.getUUID().str();
-        const string filename = (fullDir / (uuid + ".webp")).string();
-        const string filepath =
-            (fs::path(sub1) / sub2 / sub3 / (uuid + ".webp")).string();
-        ofstream file(filename, ios::binary);
-        if (!file.is_open()) {
-          res->end("Failed to save file");
-          return;
-        }
-
-        file.write(reinterpret_cast<const char *>(processed->webpData.data()),
-                   processed->webpData.size());
-        file.close();
-        string orientation_str;
-        switch (processed->orientation) {
-        case ImageOrientation::HORIZONTAL:
-          orientation_str = "horizontal";
-          break;
-        case ImageOrientation::VERTICAL:
-          orientation_str = "vertical";
-          break;
-        case ImageOrientation::SQUARE:
-          orientation_str = "square";
-          break;
-        default:
-          orientation_str = "unknown";
-        }
-        vector<pair<string, string>> fields = {
-            {"event", "upload_complete"},
-            {"user_id", *userId},
-            {"path", filepath},
-            {"orientation", orientation_str}};
-
-        // Add to Redis stream
-        redis.xadd("uploads:stream", "*", fields.begin(), fields.end());
-
-        cout << "Upload event published for user: " << *userId << "\n";
-        res->end("Upload successful");
-      }
     });
 
     res->onAborted([buffer, fileType, totalSize, userId]() {
-      buffer->clear();
-      *totalSize = 0;
-      *fileType = ImageType::UNKNOWN;
-      cout << "Upload aborted for user: " << *userId << '\n';
+        buffer->clear();
+        *totalSize = 0;
+        *fileType = ImageType::UNKNOWN;
+        cout << "Upload aborted for user: " << userId << '\n';
     });
   });
 

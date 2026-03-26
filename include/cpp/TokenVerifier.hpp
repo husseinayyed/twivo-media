@@ -1,7 +1,6 @@
-#pragma once
-#include <string>
+#include <optional>
+#include <jwt-cpp/jwt.h>
 #include <string_view>
 #include <sw/redis++/redis++.h>
-using namespace std;
-// Forward declaration
-string verifyUploadImageGetUserId(string_view token, const string& pubKey,sw::redis::Redis& redis);
+std::optional<jwt::decoded_jwt<jwt::traits::kazuho_picojson>>
+verifyUploadImageGetUserId(std::string_view token, const std::string& pubKey, sw::redis::Redis& redis);
