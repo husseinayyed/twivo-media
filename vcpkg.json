@@ -1,10 +1,11 @@
 {
   "name": "twivomedia",
-  "version": "1.0.0",
+  "version": "0.8.0",
   "dependencies": [
     "hiredis",
     "redis-plus-plus",
     "uwebsockets",
-    "libwebp"
-  ]
+    "libwebp",
+    "openssl"
+  ] 
 }

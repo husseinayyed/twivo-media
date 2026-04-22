@@ -51,7 +51,7 @@ std::unique_ptr<ProcessedImage> ImageProcessor::loadResizeWebP(
         STBIR_RGBA
     );
     stbi_image_free(img);
-    float quality = 100.0f;
+    float quality = 85.0f;
     uint8_t* webp_buf = nullptr;
     size_t webp_size = WebPEncodeRGBA(resized.get(), target_w, target_h, target_w*4, quality, &webp_buf);
     if (!webp_size) return nullptr;

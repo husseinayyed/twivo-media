@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.30.5)
+cmake_minimum_required(VERSION 3.22.1)
 project(TwivoMedia LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -62,7 +62,7 @@ target_link_libraries(Image
 add_executable(app main.cpp)
 
 # Add compile options
-target_compile_options(app PRIVATE -mavx -mavx2 -msse4.2)
+target_compile_options(app PRIVATE -march=native -O3)
 
 # Add include directories for app
 target_include_directories(app PRIVATE 

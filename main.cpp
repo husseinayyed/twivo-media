@@ -26,25 +26,37 @@ constexpr short int PORT = 8080;
 constexpr short int magicbytes = 12;
 constexpr size_t MAX_UPLOAD_SIZE =
     static_cast<size_t>(10 * 1024 * 1024); // 10 MB
-static Redis redis("tcp://127.0.0.1:6379");
+static Redis redis(std::getenv("REDIS_URL"));
+
 Redis *redisPtr = &redis;
 
 auto readPublicKey() -> string {
-  ifstream f("../twivo-backend.pem");
-  if (!f.is_open()) {
-    cerr << "ERROR: Cannot open twivo-backend.pem" << '\n';
-    exit(1);
-  }
-  string key((istreambuf_iterator<char>(f)),
-             istreambuf_iterator<char>());
-  if (key.empty()) {
-    cerr << "ERROR: Empty twivo-backend.pem" << '\n';
-    exit(1);
-  }
-  f.close();
-  return key;
-}
+    // Define the strict mount point from your Docker volume
+    const char* cert_path_env = std::getenv("SSL_CERT_PATH");
+    string cert_path = (cert_path_env) ? cert_path_env : "/app/keys/public.pem";
 
+    // Open in binary mode to ensure no OS-level newline translation
+    ifstream f(cert_path, ios::in | ios::binary);
+    
+    if (!f.is_open()) {
+        cerr << "FATAL ERROR: Could not open public key file at: " << cert_path << endl;
+        cerr << "Ensure your Docker volume is mapped correctly to ./keys/public.pem" << endl;
+        exit(1); // Stop the server; it cannot function without the key
+    }
+
+    // Read the entire file into a string
+    string key((istreambuf_iterator<char>(f)), istreambuf_iterator<char>());
+    f.close();
+
+    // Basic validation: Ensure it's not empty and has PEM headers
+    if (key.empty() || key.find("-----BEGIN") == string::npos) {
+        cerr << "FATAL ERROR: Key file is empty or malformed (Missing PEM headers)." << endl;
+        exit(1);
+    }
+
+    cout << "✅ Public key successfully loaded from file: " << cert_path << " (" << key.length() << " bytes)" << endl;
+    return key;
+}
 auto rateLimit(auto res) -> bool {
   const string ip = string(res->getRemoteAddressAsText());
   const int limit = 5; // Maximum requests per minute
@@ -228,7 +240,7 @@ auto main() -> int {
             }
 
             // Create directories
-            auto dir = fs::path("../media");
+            auto dir = fs::path("/app/media");
             fs::create_directories(dir);
 
             // Use userId as string, not pointer
