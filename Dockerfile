@@ -32,7 +32,6 @@ RUN /opt/vcpkg/vcpkg install --triplet x64-linux
 COPY CMakeLists.txt ./
 COPY src ./src/
 COPY include ./include/
-COPY external ./external/
 COPY main.cpp ./
 
 # Build the application statically

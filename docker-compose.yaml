@@ -5,26 +5,117 @@ services:
     image: redis:7-alpine
     container_name: twivo-media-redis
     restart: unless-stopped
-    volumes:
-      - redis-data:/data
-    command: redis-server --appendonly yes
+    # No volumes - completely stateless Redis
+    command: >
+      redis-server 
+      --appendonly no 
+      --save "" 
+      --tcp-keepalive 60
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
+    networks:
+      - twivo-network
 
+  # --- SEAWEEDFS STORAGE CORE ---
+  weed-master:
+    image: chrislusf/seaweedfs:latest
+    container_name: twivo-weed-master
+    restart: unless-stopped
+    command: master -ip=weed-master
+    ports:
+      - "9333:9333"
+    volumes:
+      - seaweed-master-data:/data
+    networks:
+      - twivo-network
+
+  weed-volume:
+    image: chrislusf/seaweedfs:latest
+    container_name: twivo-weed-volume
+    restart: unless-stopped
+    command: volume -mserver=weed-master:9333 -port=8085 -max=100 -dir=/data
+    ports:
+      - "8085:8085"
+    volumes:
+      - seaweed-volume-data:/data
+    depends_on:
+      - weed-master
+    networks:
+      - twivo-network
+
+  weed-filer:
+    image: chrislusf/seaweedfs:latest
+    container_name: twivo-weed-filer
+    restart: unless-stopped
+    command: filer -master=weed-master:9333
+    ports:
+      - "8888:8888"
+    volumes:
+      - seaweed-filer-data:/data
+    depends_on:
+      - weed-master
+      - weed-volume
+    networks:
+      - twivo-network
+
+  # --- APPLICATION ENGINE ---
   app:
-    image: twivo-media:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
     container_name: twivo-app
     restart: unless-stopped
     ports:
-      - "8080:8080"
-    env_file:
-      - .env
+      - "8020:8020"
+    volumes:
+      - .:/app
+      - /app/build
+      - ../twivo-backend/keys/public.pem:/app/keys/public.pem:ro
+    environment:
+      - REDIS_URL=tcp://redis:6379
+      - SERVER_PORT=8020
+      - SSL_CERT_PATH=/app/keys/public.pem
+      - SEAWEEDFS_FILER_URL=http://weed-filer:8888
+    command: >
+      bash -c "
+      mkdir -p build && cd build && 
+      cmake .. -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake -DCMAKE_BUILD_TYPE=Release && 
+      make -j$(nproc) && 
+      ./app
+      "
     depends_on:
       redis:
         condition: service_healthy
+      weed-filer:
+        condition: service_started
+    networks:
+      - twivo-network
+
+  # --- DYNAMIC IMAGE PROXYING ---
+  imgproxy:
+    image: ghcr.io/imgproxy/imgproxy:latest
+    container_name: imgproxy
+    restart: always
+    ports:
+      - "8000:8080"
+    environment:
+      IMGPROXY_KEY: "5fb014620645032b5fab6e5afea3e8e93ce7920541a8ccaba523305b07acbd8f"
+      IMGPROXY_SALT: "bba4dd490787647d4bbe241860cc7761d0cf5a31e0dd49e6330cbf01c210c347"
+      IMGPROXY_ENABLE_WEBP_DETECTION: "true"
+      IMGPROXY_TTL: "2592000"
+      IMGPROXY_MAX_SRC_FILE_SIZE: "15728640"
+    networks:
+      - twivo-network
 
 volumes:
-  redis-data:
+  seaweed-master-data:
+  seaweed-volume-data:
+  seaweed-filer-data:
+
+networks:
+  twivo-network:
+    driver: bridge
