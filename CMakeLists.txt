@@ -4,82 +4,44 @@ project(TwivoMedia LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-# Find OpenSSL (required for JWT)
+# --- 1. Dependencies ---
 find_package(OpenSSL REQUIRED)
-
-# Find packages using vcpkg
 find_package(hiredis CONFIG REQUIRED)
 find_package(redis++ CONFIG REQUIRED)
 find_package(unofficial-uwebsockets CONFIG REQUIRED)
-find_package(WebP CONFIG REQUIRED)
+find_package(CURL REQUIRED)
+find_package(jwt-cpp CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
-# Get redis++ include directories
 get_target_property(REDISPLUSPLUS_INCLUDE_DIR redis++::redis++_static INTERFACE_INCLUDE_DIRECTORIES)
 
-# Source files
-set(TOKEN_IMAGE_SOURCES
-    src/cpp/TokenVerifier.cpp
+# --- 2. Build Internal Library ---
+add_library(TokenImageVerifier STATIC 
+    src/TokenVerifier.cpp
+    src/ImageType.cpp
 )
 
-set(IMAGE_SOURCES
-    src/cpp/ImageType.cpp
-    src/cpp/ImageProcessor.cpp
+# Force the directory directly into the target's search list
+target_include_directories(TokenImageVerifier PUBLIC 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${REDISPLUSPLUS_INCLUDE_DIR}
+    ${NLOHMANN_JSON_INCLUDE_DIR}
 )
 
-# Static libraries
-add_library(TokenImageVerifier STATIC ${TOKEN_IMAGE_SOURCES})
-add_library(Image STATIC ${IMAGE_SOURCES})
-
-# Include directories for TokenImageVerifier
-target_include_directories(TokenImageVerifier
-    PUBLIC external/include
-    PUBLIC include/cpp
-    PRIVATE ${REDISPLUSPLUS_INCLUDE_DIR}  # Add redis++ include
-)
-
-# Include directories for Image
-target_include_directories(Image
-    PUBLIC include/cpp/stbimages
-    PUBLIC include/c/stbimages
-)
-
-# Link libraries for TokenImageVerifier (needs OpenSSL and redis++)
 target_link_libraries(TokenImageVerifier
     PUBLIC OpenSSL::SSL
     PUBLIC OpenSSL::Crypto
-    PRIVATE redis++::redis++_static  # Link redis++
-    PRIVATE hiredis::hiredis
-)
-
-# Link libraries for Image
-target_link_libraries(Image
-    PUBLIC WebP::webp
-    PUBLIC WebP::webpdecoder
-)
-
-# Main executable
-add_executable(app main.cpp)
-
-# Add compile options
-target_compile_options(app PRIVATE -march=native -O3)
-
-# Add include directories for app
-target_include_directories(app PRIVATE 
-    include/cpp 
-    include/c 
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/uuid_v4
-    /home/husseinayyed/vcpkg/packages/uwebsockets_x64-linux/include
-    ${REDISPLUSPLUS_INCLUDE_DIR}  # Add redis++ include for app
-)
-
-# Link libraries for app
-target_link_libraries(app
-    PRIVATE Image
-    PRIVATE TokenImageVerifier
-    PRIVATE unofficial::uwebsockets::uwebsockets
+    PUBLIC jwt-cpp::jwt-cpp
     PRIVATE redis++::redis++_static
     PRIVATE hiredis::hiredis
-    PRIVATE OpenSSL::SSL
-    PRIVATE OpenSSL::Crypto
+)
+
+# --- 3. Main Application ---
+add_executable(app main.cpp)
+target_compile_options(app PRIVATE -march=native -O3 -Wall -Wextra)
+
+target_link_libraries(app
+    PRIVATE TokenImageVerifier
+    PRIVATE unofficial::uwebsockets::uwebsockets
+    PRIVATE CURL::libcurl
 )

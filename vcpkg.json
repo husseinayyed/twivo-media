@@ -5,7 +5,9 @@
     "hiredis",
     "redis-plus-plus",
     "uwebsockets",
-    "libwebp",
-    "openssl"
+    "curl",
+    "openssl",
+    "jwt-cpp",
+    "nlohmann-json"
   ] 
 }
