@@ -15,8 +15,8 @@ UploadHandler::UploadHandler()
 }
 
 UploadHandler::~UploadHandler() = default;
-
-void UploadHandler::handle(auto* res, auto* req, const std::string& publicKey) {
+template<typename Res, typename Req>
+void UploadHandler::handle(Res* res, Req* req, const std::string& publicKey) {
     // Set timeout for the request
     res->setTimeout(constants::REQUEST_TIMEOUT_MS);
     
