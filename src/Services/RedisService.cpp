@@ -1,8 +1,8 @@
-// src/services/RedisService.cpp
 #include "RedisService.hpp"
 #include <iostream>
 #include <cstring>
 
+// Static instance getter
 RedisService& RedisService::getInstance() {
     static RedisService instance;
     return instance;
@@ -16,11 +16,9 @@ RedisService::~RedisService() {
 }
 
 bool RedisService::connect(const std::string& url) {
-    // Parse Redis URL (format: tcp://host:port)
-    std::string host = "127.0.0.1";
+    std::string host = "redis";
     int port = 6379;
     
-    // Simple URL parsing (you can expand this)
     if (url.find("tcp://") == 0) {
         std::string rest = url.substr(6);
         size_t colon = rest.find(':');
@@ -30,17 +28,14 @@ bool RedisService::connect(const std::string& url) {
         }
     }
     
-    // Connect with timeout (2 seconds)
     struct timeval timeout = {2, 0};
     ctx_ = redisConnectWithTimeout(host.c_str(), port, timeout);
     
     if (!ctx_ || ctx_->err) {
         if (ctx_) {
-            std::cerr << "Redis connection error: " << ctx_->errstr << std::endl;
+            std::cerr << "Redis error: " << ctx_->errstr << std::endl;
             redisFree(ctx_);
             ctx_ = nullptr;
-        } else {
-            std::cerr << "Redis connection allocation failed" << std::endl;
         }
         return false;
     }
@@ -50,12 +45,22 @@ bool RedisService::connect(const std::string& url) {
 }
 
 bool RedisService::ping() {
-    if (!ctx_) return false;
+    if (!ctx_) {
+        std::cerr << "Redis context is null" << std::endl;
+        return false;
+    }
     
     redisReply* reply = (redisReply*)redisCommand(ctx_, "PING");
-    if (!reply) return false;
+    if (!reply) {
+        std::cerr << "Redis PING returned null reply" << std::endl;
+        return false;
+    }
     
-    bool ok = (reply->type == REDIS_REPLY_STRING && std::string(reply->str) == "PONG");
+    bool ok = false;
+    if (reply->type == REDIS_REPLY_STRING) {
+        ok = (strcmp(reply->str, "PONG") == 0);
+    }
+    
     freeReplyObject(reply);
     return ok;
 }
@@ -63,14 +68,10 @@ bool RedisService::ping() {
 bool RedisService::storeJTI(const std::string& jti, long long ttl_seconds) {
     if (!ctx_) return false;
     
-    redisReply* reply = (redisReply*)redisCommand(ctx_, 
-        "SETEX %s %lld used", 
-        jti.c_str(), 
-        ttl_seconds);
-    
+    redisReply* reply = (redisReply*)redisCommand(ctx_, "SETEX %s %lld used", jti.c_str(), ttl_seconds);
     if (!reply) return false;
     
-    bool ok = (reply->type == REDIS_REPLY_STATUS && std::string(reply->str) == "OK");
+    bool ok = (reply->type == REDIS_REPLY_STATUS);
     freeReplyObject(reply);
     return ok;
 }
@@ -90,7 +91,6 @@ bool RedisService::addToStream(const std::string& stream,
                                const std::vector<std::pair<std::string, std::string>>& fields) {
     if (!ctx_) return false;
     
-    // Build XADD command
     std::vector<const char*> argv;
     std::vector<size_t> argvlen;
     
