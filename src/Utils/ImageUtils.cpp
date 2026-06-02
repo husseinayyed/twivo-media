@@ -1,6 +1,6 @@
 // src/utils/ImageUtils.cpp
 #include "ImageUtils.hpp"
-#include "core/Constants.hpp"
+#include "Core/Constants.hpp"
 
 namespace image {
 

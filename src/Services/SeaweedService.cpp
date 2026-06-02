@@ -1,6 +1,6 @@
 // src/services/SeaweedService.cpp
 #include "SeaweedService.hpp"
-#include "core/Constants.hpp"
+#include "Core/Constants.hpp"
 #include <curl/curl.h>
 #include <iostream>
 #include <thread>

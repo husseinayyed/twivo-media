@@ -2,7 +2,7 @@
 #pragma once
 
 #include <cstddef>
-
+#include <cstdint>
 namespace constants {
 
     // Server configuration
