@@ -5,7 +5,6 @@ services:
     image: redis:7-alpine
     container_name: twivo-media-redis
     restart: unless-stopped
-    # No volumes - completely stateless Redis
     command: >
       redis-server 
       --appendonly no 
@@ -19,7 +18,6 @@ services:
     networks:
       - twivo-network
 
-  # --- SEAWEEDFS STORAGE CORE ---
   weed-master:
     image: chrislusf/seaweedfs:latest
     container_name: twivo-weed-master
@@ -61,7 +59,6 @@ services:
     networks:
       - twivo-network
 
-  # --- APPLICATION ENGINE ---
   app:
     build:
       context: .
@@ -70,16 +67,16 @@ services:
     container_name: twivo-app
     restart: unless-stopped
     ports:
-      - "8020:8020"
+      - "${SERVER_PORT:-8020}:8020"
     volumes:
       - .:/app
       - /app/build
       - ../twivo-backend/keys/public.pem:/app/keys/public.pem:ro
     environment:
-      - REDIS_URL=tcp://redis:6379
-      - SERVER_PORT=8020
-      - SSL_CERT_PATH=/app/keys/public.pem
-      - SEAWEEDFS_FILER_URL=http://weed-filer:8888
+      - REDIS_URL=${REDIS_URL:-tcp://redis:6379}
+      - SERVER_PORT=${SERVER_PORT:-8020}
+      - SSL_CERT_PATH=${SSL_CERT_PATH:-/app/keys/public.pem}
+      - SEAWEEDFS_FILER_URL=${SEAWEEDFS_FILER_URL:-http://weed-filer:8888}
     command: >
       bash -c "
       mkdir -p build && cd build && 
@@ -95,7 +92,6 @@ services:
     networks:
       - twivo-network
 
-  # --- DYNAMIC IMAGE PROXYING ---
   imgproxy:
     image: ghcr.io/imgproxy/imgproxy:latest
     container_name: imgproxy
@@ -103,11 +99,13 @@ services:
     ports:
       - "8000:8080"
     environment:
-      IMGPROXY_KEY: "5fb014620645032b5fab6e5afea3e8e93ce7920541a8ccaba523305b07acbd8f"
-      IMGPROXY_SALT: "bba4dd490787647d4bbe241860cc7761d0cf5a31e0dd49e6330cbf01c210c347"
+      IMGPROXY_KEY: ${IMGPROXY_KEY}
+      IMGPROXY_SALT: ${IMGPROXY_SALT}
       IMGPROXY_ENABLE_WEBP_DETECTION: "true"
       IMGPROXY_TTL: "2592000"
       IMGPROXY_MAX_SRC_FILE_SIZE: "15728640"
+      # Allow unsafe URLs for development (remove in production)
+      IMGPROXY_IGNORE_SIGNATURE_ERRORS: "true"
     networks:
       - twivo-network
 
