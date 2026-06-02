@@ -3,7 +3,7 @@
 
 #include "ImageType.hpp"
 #include <string>
-
+#include <cstdint>
 namespace image {
 
     /**
