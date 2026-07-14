@@ -1,9 +1,9 @@
 ### PING
-GET http://localhost:8080/ping
+GET http://localhost:80/i/
 
 ### UPLOAD AN IMAGE
-@key = key
-POST http://localhost:8080/upload
+@key = eyJhbGciOiJFZERTQSJ9.eyJhY3Rpb24iOiJ1cGxvYWRJbWFnZSIsImlkIjoiNmE1NTEyYWQ3YzM3MzUwYWMxMDlmY2E1IiwiaXNzIjoidHdpdm8tYmFja2VuZCIsInN1YiI6IjZhNTRmZTQ2NzE1MTMyOWM1NjgxYzA3MSIsImF1ZCI6InR3aXZvLW1lZGlhIiwianRpIjoiNjViNDA0YWItNTg3MS00YThhLTg5OTUtNmM0N2ZlMDVhYmNlIiwiaWF0IjoxNzgzOTYwMjM3LCJleHAiOjE4MDc5NjAyMzd9.0lOHnUgC5g3YObrB5jszfnCRdzh5O1GSMqO9R7CqhmUBRhO31txj9w_x554gnx3AwdvJWRlMfhao4gCrxi3WCQ
+POST http://localhost:8020/upload
 Content-Type: image/png
 X-TWIVO-BACKEND: {{key}}
 

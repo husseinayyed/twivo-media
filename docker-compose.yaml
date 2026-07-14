@@ -1,6 +1,16 @@
 version: '3.8'
 
 services:
+  gateway:
+    image: openresty/openresty:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+    depends_on:
+      - redis
+    networks:
+      - twivo-network
   redis:
     image: redis:7-alpine
     container_name: twivo-media-redis
@@ -62,36 +72,30 @@ services:
   app:
     build:
       context: .
-      dockerfile: Dockerfile
-      target: builder
+      target: dev  # Use the 'dev' stage from your Dockerfile
     container_name: twivo-app
     restart: unless-stopped
-    ports:
-      - "${SERVER_PORT:-8020}:8020"
     volumes:
+      # Bind your source code for real-time development
       - .:/app
-      - /app/build
+      # Use a named volume for the build folder to avoid host I/O latency
+      - build_volume:/app/build
+      # Mount your public key as read-only
       - ../twivo-backend/keys/public.pem:/app/keys/public.pem:ro
     environment:
       - REDIS_URL=${REDIS_URL:-tcp://redis:6379}
       - SERVER_PORT=${SERVER_PORT:-8020}
-      - SSL_CERT_PATH=${SSL_CERT_PATH:-/app/keys/public.pem}
+      - SSL_CERT_PATH=/app/keys/public.pem
       - SEAWEEDFS_FILER_URL=${SEAWEEDFS_FILER_URL:-http://weed-filer:8888}
-    command: >
-      bash -c "
-      mkdir -p build && cd build && 
-      cmake .. -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake -DCMAKE_BUILD_TYPE=Release && 
-      make -j$(nproc) && 
-      ./app
-      "
+    networks:
+      - twivo-network
+    # Keeps the container alive while you work
+    command: ["tail", "-f", "/dev/null"]
     depends_on:
       redis:
         condition: service_healthy
       weed-filer:
         condition: service_started
-    networks:
-      - twivo-network
-
   imgproxy:
     image: ghcr.io/imgproxy/imgproxy:latest
     container_name: imgproxy
@@ -99,8 +103,9 @@ services:
     ports:
       - "8000:8080"
     environment:
-      IMGPROXY_KEY: ${IMGPROXY_KEY}
-      IMGPROXY_SALT: ${IMGPROXY_SALT}
+      # IMGPROXY_KEY: ${IMGPROXY_KEY}
+      # IMGPROXY_SALT: ${IMGPROXY_SALT}
+      IMGPROXY_INSECURE: "true"
       IMGPROXY_ENABLE_WEBP_DETECTION: "true"
       IMGPROXY_TTL: "2592000"
       IMGPROXY_MAX_SRC_FILE_SIZE: "15728640"
@@ -113,7 +118,7 @@ volumes:
   seaweed-master-data:
   seaweed-volume-data:
   seaweed-filer-data:
-
+  build_volume:
 networks:
   twivo-network:
     driver: bridge
