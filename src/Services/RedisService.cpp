@@ -86,7 +86,23 @@ bool RedisService::jtiExists(const std::string& jti) {
     freeReplyObject(reply);
     return exists;
 }
-
+bool RedisService::storeNanoId(const std::string& id, const std::string& path, long long ttl_seconds) {
+    if (!ctx_) return false;
+    
+     redisReply* reply = (redisReply*)redisCommand(ctx_, "SETEX %s %lld %s", 
+                                                id.c_str(), 
+                                                ttl_seconds, 
+                                                path.c_str());
+    
+    if (!reply) {
+        std::cerr << "Redis SETEX error: " << ctx_->errstr << std::endl;
+        return false;
+    }
+    
+    bool ok = (reply->type == REDIS_REPLY_STATUS);
+    freeReplyObject(reply);
+    return ok;
+}
 bool RedisService::addToStream(const std::string& stream,
                                const std::vector<std::pair<std::string, std::string>>& fields) {
     if (!ctx_) return false;

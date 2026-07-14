@@ -15,6 +15,7 @@ public:
     bool jtiExists(const std::string& jti);
     bool addToStream(const std::string& stream, 
                      const std::vector<std::pair<std::string, std::string>>& fields);
+    bool storeNanoId(const std::string& id, const std::string& path, long long ttl_seconds);
     
     ~RedisService();  // Only ONE destructor declaration
     
