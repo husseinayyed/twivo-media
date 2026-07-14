@@ -11,9 +11,7 @@
 #include <fstream>
 #include <csignal>
 #include <atomic>
-static sw::redis::Redis redis(std::getenv("REDIS_URL"));
-sw::redis::Redis* redisPtr = &redis;
-
+#include <memory>
 // Global flag for graceful shutdown
 static std::atomic<bool> g_running{true};
 static uWS::App* g_app = nullptr;
@@ -103,16 +101,10 @@ bool MediaServer::start() {
     
     // Health check endpoint
     app.get("/health", [](auto* res, auto* /*req*/) {
-    extern sw::redis::Redis* redisPtr;
-    bool redis_ok = false;
+    // Access your singleton
+    bool redis_ok = RedisService::getInstance().ping();
+    
     bool seaweed_ok = false;
-    
-    try {
-        redisPtr->ping();
-        redis_ok = true;
-    } catch (...) {}
-    
-    // Quick check if filer responds
     CURL* curl = curl_easy_init();
     if (curl) {
         curl_easy_setopt(curl, CURLOPT_URL, "http://weed-filer:8888/");

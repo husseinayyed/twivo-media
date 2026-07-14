@@ -22,6 +22,7 @@ set(SOURCES
     src/Services/RedisService.cpp
     src/Services/SeaweedService.cpp
     src/auth/TokenValidator.cpp
+    src/handlers/UploadHandler.cpp
 )
 
 add_executable(app ${SOURCES})
