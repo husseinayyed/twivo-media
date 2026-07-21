@@ -7,7 +7,6 @@
 #include "models/UploadContext.hpp"
 #include "Core/Constants.hpp"
 
-class TokenValidator;
 class SeaweedService;
 
 typedef std::shared_ptr<UploadContext> UploadContextPtr;
@@ -19,46 +18,63 @@ public:
 
     template<typename Res, typename Req>
     void handle(Res* res, Req* req, const std::string& pubKeyString) {
-        auto token = req->getHeader("x-twivo-backend");
-        if (token.empty()) {
-            res->writeStatus("400 Bad Request")->end("Missing JWT token");
+        // 1. Extract trusted identity headers set by the Nginx Gateway.
+    // The Gateway guarantees these headers contain verified data.
+    std::string userId = std::string(req->getHeader("x-twivo-user-id"));
+    std::string tweetId = std::string(req->getHeader("x-twivo-tweet-id"));
+
+    // 2. Defensive check: Ensure the request actually passed through our Gateway.
+    // If these are empty, an unauthorized user tried to access the backend directly.
+    if (userId.empty() || tweetId.empty()) {
+        res->writeStatus("403 Forbidden")->end("Security Violation: Unauthorized Access");
+        return;
+    }
+
+    // 3. Initialize the context with the verified identity.
+    auto ctx = std::make_shared<UploadContext>();
+    ctx->userId = userId;
+    ctx->tweetId = tweetId;
+
+    // 4. Handle incoming data chunks.
+    res->onData([this, res, ctx](std::string_view chunk, bool isLast) {
+        if (ctx->isCompleted) return;
+
+        // Check if the file size exceeds the allowed limit.
+        ctx->totalSize += chunk.size();
+        if (ctx->totalSize > constants::MAX_UPLOAD_SIZE) {
+            ctx->isCompleted = true;
+            res->writeStatus("413 Payload Too Large")->end("File too large");
             return;
         }
 
-        auto ctx = std::make_shared<UploadContext>();
-        if (!authenticate(std::string(token), pubKeyString, ctx)) {
-            res->writeStatus("401 Unauthorized")->end("Invalid or expired token");
-            return;
+        // Buffer the data chunk.
+        ctx->buffer.insert(ctx->buffer.end(), chunk.begin(), chunk.end());
+
+        // Attempt to detect the image type once we have enough data.
+        if (ctx->fileType == ImageType::UNKNOWN && ctx->buffer.size() >= constants::MIN_BUFFER_FOR_TYPE_DETECTION) {
+            ctx->fileType = getImageType(reinterpret_cast<const char*>(ctx->buffer.data()), ctx->buffer.size());
         }
 
-        res->onData([this, res, ctx](std::string_view chunk, bool isLast) {
-            if (ctx->isCompleted) return;
-
-            ctx->totalSize += chunk.size();
-            if (ctx->totalSize > constants::MAX_UPLOAD_SIZE) {
-                ctx->isCompleted = true;
-                res->writeStatus("413 Payload Too Large")->end("File too large");
-                return;
+        // Finalize the request when the last chunk arrives.
+        if (isLast) {
+            ctx->isCompleted = true;
+            // processImage now uses the trusted userId and tweetId stored in the context.
+            if(processImage(ctx, res)){
+                res->writeStatus("201 Created")->end("Upload successful");
+                
             }
+        }
+    });
 
-            ctx->buffer.insert(ctx->buffer.end(), chunk.begin(), chunk.end());
-
-            if (ctx->fileType == ImageType::UNKNOWN && ctx->buffer.size() >= constants::MIN_BUFFER_FOR_TYPE_DETECTION) {
-                ctx->fileType = getImageType(reinterpret_cast<const char*>(ctx->buffer.data()), ctx->buffer.size());
-            }
-
-            if (isLast) {
-                ctx->isCompleted = true;
-                processImage(ctx, res);
-            }
-        });
+    res->onAborted([ctx]() {
+        ctx->isCompleted = true;
+        std::cerr << "⚠️ Upload aborted by client" << std::endl;
+    });
     }
 
 private:
     bool processImage(UploadContextPtr ctx, uWS::HttpResponse<false>* res);
-    bool authenticate(const std::string& token, const std::string& key, UploadContextPtr ctx);
     bool validateDimensions(UploadContextPtr ctx);
     
-    std::unique_ptr<TokenValidator> tokenValidator_;
     std::unique_ptr<SeaweedService> seaweedService_;
 };

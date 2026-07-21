@@ -1,5 +1,4 @@
 #include "UploadHandler.hpp"
-#include "auth/TokenValidator.hpp"
 #include "Services/SeaweedService.hpp"
 #include "Services/RedisService.hpp"
 #include "Utils/ImageUtils.hpp"
@@ -8,17 +7,11 @@
 #include <iostream>
 #include <span>
 
-UploadHandler::UploadHandler() 
-    : tokenValidator_(std::make_unique<TokenValidator>())
-    , seaweedService_(std::make_unique<SeaweedService>()) {}
+UploadHandler::UploadHandler() : seaweedService_(std::make_unique<SeaweedService>()) {}
 
 UploadHandler::~UploadHandler() = default;
 
-bool UploadHandler::authenticate(const std::string& token, 
-                                  const std::string& publicKey,
-                                  UploadContextPtr ctx) {
-    return tokenValidator_->verify(token, publicKey, ctx->userId, ctx->tweetId);
-}
+
 
 bool UploadHandler::validateDimensions(UploadContextPtr ctx) {
     auto dim = getImageDimensions(
@@ -68,6 +61,6 @@ bool UploadHandler::processImage(UploadContextPtr ctx, uWS::HttpResponse<false>*
 
     redis.addToStream(constants::REDIS_STREAM_NAME, fields);
     
-    res->writeStatus("201 Created")->end("Upload successful");
+    
     return true;
 }
