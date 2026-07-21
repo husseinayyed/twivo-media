@@ -9,19 +9,16 @@ find_package(hiredis CONFIG REQUIRED)
 find_package(redis++ CONFIG REQUIRED)
 find_package(unofficial-uwebsockets CONFIG REQUIRED)
 find_package(CURL REQUIRED)
-find_package(jwt-cpp CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
 set(SOURCES
     main.cpp
     src/ImageType.cpp
-    src/TokenVerifier.cpp
     src/Server.cpp
     src/Utils/CryptoUtils.cpp
     src/Utils/ImageUtils.cpp
     src/Services/RedisService.cpp
     src/Services/SeaweedService.cpp
-    src/auth/TokenValidator.cpp
     src/handlers/UploadHandler.cpp
 )
 
@@ -39,7 +36,6 @@ target_link_libraries(app
     PRIVATE unofficial::uwebsockets::uwebsockets
     PRIVATE CURL::libcurl
     PRIVATE OpenSSL::SSL OpenSSL::Crypto
-    PRIVATE jwt-cpp::jwt-cpp
     PRIVATE redis++::redis++_static hiredis::hiredis
     PRIVATE nlohmann_json::nlohmann_json
 )

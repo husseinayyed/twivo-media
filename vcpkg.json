@@ -7,7 +7,6 @@
     "uwebsockets",
     "curl",
     "openssl",
-    "jwt-cpp",
     "nlohmann-json"
   ] 
 }
