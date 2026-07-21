@@ -1,11 +1,20 @@
 version: '3.8'
 
+
+
 services:
   gateway:
-    image: openresty/openresty:alpine
+    build:
+      context: .
+      dockerfile: gateway.Dockerfile  # Point to the specific file
     ports:
       - "80:80"
+    environment:
+      - REDIS_URL=${REDIS_URL}
+      - JWT_ISS=${JWT_ISS}
+      - JWT_AUD=${JWT_AUD}
     volumes:
+      - ${PUBLIC_KEY_PATH}:/app/keys/public.pem:ro
       - ./nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
     depends_on:
       - redis
@@ -80,8 +89,8 @@ services:
       - .:/app
       # Use a named volume for the build folder to avoid host I/O latency
       - build_volume:/app/build
-      # Mount your public key as read-only
-      - ../twivo-backend/keys/public.pem:/app/keys/public.pem:ro
+      # Mount your public key as read-only 
+      - ${PUBLIC_KEY_PATH}:/app/keys/public.pem:ro
     environment:
       - REDIS_URL=${REDIS_URL:-tcp://redis:6379}
       - SERVER_PORT=${SERVER_PORT:-8020}
@@ -96,6 +105,8 @@ services:
         condition: service_healthy
       weed-filer:
         condition: service_started
+    expose:
+      - "8020"  # Expose the app port for internal communication
   imgproxy:
     image: ghcr.io/imgproxy/imgproxy:latest
     container_name: imgproxy
