@@ -16,7 +16,8 @@ import (
 	gonanoid "github.com/matoous/go-nanoid/v2"
 	_ "golang.org/x/image/webp"
 
-	"github.com/husseinayyed/twivo-media/store"
+	"github.com/husseinayyed/twivo-media/internal/database/redis"
+	"github.com/husseinayyed/twivo-media/internal/storage"
 )
 
 const (
@@ -40,12 +41,12 @@ var (
 )
 
 func main() {
-	router := gin.Default()
-	fileUUID, err := gonanoid.New()
+	_, err := redis.ConnectRedis()
 	if err != nil {
-		fmt.Println("Error generating nanoid:", err)
+		fmt.Println("Error connecting to Redis:", err)
 		os.Exit(1)
 	}
+	router := gin.Default()
 	port := "8020"
 
 	cache, err := lru.New[string, string](100)
@@ -54,7 +55,6 @@ func main() {
 		os.Exit(1)
 	}
 	_ = cache
-	_ = fileUUID
 
 	router.GET("/ping", func(c *gin.Context) {
 		c.JSON(200, gin.H{"ping": "pong"})
@@ -66,6 +66,12 @@ func main() {
 
 		if userID == "" || tweetID == "" {
 			c.JSON(400, gin.H{"error": "Missing required headers"})
+			return
+		}
+
+		fileUUID, err := gonanoid.New(16)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to generate file identifier"})
 			return
 		}
 
@@ -107,72 +113,13 @@ func main() {
 		}
 
 		fullStream = io.MultiReader(bytes.NewReader(inspectedBytes), body)
-		chunkBuffer := make([]byte, ChunkSize)
-		var totalBytesRead int64
 
-		targetFilename, uploadErr := store.StreamToWeedFiler(ctx, userID, tweetID, fileUUID, fileType, func(pw io.Writer) error {
-		
-			pipeWriter, ok := pw.(*io.PipeWriter)
-			if ok {
-				defer pipeWriter.Close()
-			}
+		UploadCtx, uploadCancel := context.WithTimeout(ctx, RequestTotalTimeout)
+		defer uploadCancel()
 
-			for {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-
-				readChan := make(chan struct {
-					n   int
-					err error
-				}, 1)
-
-				go func(buf []byte) {
-					rn, rErr := fullStream.Read(buf)
-					readChan <- struct {
-						n   int
-						err error
-					}{rn, rErr}
-				}(chunkBuffer)
-
-				chunkTimer := time.NewTimer(ChunkReadTimeout)
-
-				select {
-				case <-ctx.Done():
-					chunkTimer.Stop()
-					return ctx.Err()
-				case <-chunkTimer.C:
-					chunkTimer.Stop()
-					return fmt.Errorf("chunk read stall timeout exceeded")
-				case res := <-readChan:
-					chunkTimer.Stop()
-					n = res.n
-					readErr := res.err
-
-					if n > 0 {
-						totalBytesRead += int64(n)
-						currentChunk := chunkBuffer[:n]
-
-						if _, writeErr := pw.Write(currentChunk); writeErr != nil {
-							return writeErr
-						}
-					}
-
-					if readErr != nil {
-						if readErr == io.EOF {
-							return nil
-						}
-						return readErr
-					}
-				}
-			}
-		})
-
+		targetFilename, totalBytesRead, uploadErr := storage.UploadFileToWeedFiler(UploadCtx, userID, tweetID, fileUUID, fileType, fullStream)
 		if uploadErr != nil {
-			if targetFilename != "" {
-				go store.DeleteOrphanFile(targetFilename)
-			}
-			c.JSON(502, gin.H{"error": "Failed to persist file in storage backend"})
+			c.JSON(500, gin.H{"error": uploadErr.Error()})
 			return
 		}
 
