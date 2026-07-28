@@ -23,7 +23,6 @@ func ConnectRedis() (redisClient *redis.Client, err error) {
 		Addr:     redisHost,
 		DB:       0,
 	})
-
 	ctx := context.Background()
 	if err := RedisClient.Ping(ctx).Err(); err != nil {
 		fmt.Println("Error connecting to Redis:", err)

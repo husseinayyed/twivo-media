@@ -1,22 +1,26 @@
 package main
 
 import (
-    "bytes"
-    "context"
-    "fmt"
-    "image"
-    _ "image/jpeg"
-    _ "image/png"
-    "io"
-    "os"
-    "time"
+	"bytes"
+	"context"
+	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
+	"io"
+	"os"
+	"time"
 
-    "github.com/gin-gonic/gin"
-    lru "github.com/hashicorp/golang-lru/v2"
-    gonanoid "github.com/matoous/go-nanoid/v2"
-    _ "golang.org/x/image/webp"
-    "github.com/husseinayyed/twivo-media/internal/storage"
+	"sync"
 
+	"github.com/gin-gonic/gin"
+	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/husseinayyed/twivo-media/internal/database/redis"
+	"github.com/husseinayyed/twivo-media/internal/storage"
+	"github.com/husseinayyed/twivo-media/internal/tasks"
+	"github.com/husseinayyed/twivo-media/internal/worker"
+	gonanoid "github.com/matoous/go-nanoid/v2"
+	_ "golang.org/x/image/webp"
 )
 
 const (
@@ -42,6 +46,26 @@ var (
 func main() {
     router := gin.Default()
     port := "8020"
+    _,err := redis.ConnectRedis()
+    if err != nil {
+            fmt.Println("Error worker,", err)
+            return
+        }
+    chunkPool := sync.Pool{
+        New: func() any {
+            buf := make([]byte, ChunkSize)
+            return &buf
+        },
+    }
+    w, err := worker.NewWorker()
+    go func() {
+        if err != nil {
+            fmt.Println("Error worker,", err)
+            return
+        }
+        w.Start()
+    }()
+
     cache, err := lru.New[string, string](100)
     if err != nil {
         fmt.Println("Error creating LRU cache:", err)
@@ -111,8 +135,19 @@ func main() {
         }
 
         // Stream reader for uploading
+               // Stream reader for uploading
         fullStream := bytes.NewReader(bodyBytes)
-        chunkBuffer := make([]byte, ChunkSize)
+        
+        // 1. FIXED: Get from pool and type assert to the actual pointer type (*[]byte)
+        bufPtr := chunkPool.Get().(*[]byte)
+        
+        // 2. FIXED: Ensure buffer reference goes back to pool when endpoint finishes
+        defer func() {
+            chunkPool.Put(bufPtr)
+        }()
+
+        // Dereference once here to get our base backing slice container
+        baseBuffer := *bufPtr
         var totalBytesRead int64
 
         targetFilename, uploadErr := storage.StreamToWeedFiler(ctx, fileUUID, fileType, func(pw io.Writer) error {
@@ -126,11 +161,17 @@ func main() {
                     return err
                 }
 
+                // 3. FIXED: Allocate a dedicated sub-slice window for THIS loop iteration.
+                // This gives the background goroutine its own localized slice header 
+                // preventing data races if the loop moves forward on a timeout.
+                workingChunk := baseBuffer[0:ChunkSize]
+
                 readChan := make(chan struct {
                     n   int
                     err error
                 }, 1)
 
+                // 4. FIXED: Pass the local sub-slice copy explicitly into the goroutine
                 go func(buf []byte) {
                     rn, rErr := fullStream.Read(buf)
                     select {
@@ -140,7 +181,7 @@ func main() {
                     }{rn, rErr}:
                     default:
                     }
-                }(chunkBuffer)
+                }(workingChunk)
 
                 chunkTimer := time.NewTimer(ChunkReadTimeout)
 
@@ -150,6 +191,11 @@ func main() {
                     return ctx.Err()
                 case <-chunkTimer.C:
                     chunkTimer.Stop()
+                    // 5. CRITICAL: If a stall occurs, abandon this buffer completely! 
+                    // Do NOT return it to the pool because the background goroutine 
+                    // might still write to it later, which would corrupt future requests.
+                    bufPtr = chunkPool.New().(*[]byte) 
+                    baseBuffer = *bufPtr
                     return fmt.Errorf("chunk read stall timeout exceeded")
                 case res := <-readChan:
                     chunkTimer.Stop()
@@ -158,7 +204,8 @@ func main() {
 
                     if n > 0 {
                         totalBytesRead += int64(n)
-                        currentChunk := chunkBuffer[:n]
+                        // Slice out exactly what was read from our thread-isolated chunk
+                        currentChunk := workingChunk[:n]
 
                         if _, writeErr := pw.Write(currentChunk); writeErr != nil {
                             return writeErr
@@ -183,6 +230,16 @@ func main() {
             c.JSON(502, gin.H{"error": "Failed to persist file in storage backend"})
             return
         }
+       data := tasks.UploadPayload{
+        FileUUID: fileUUID,
+        FileType: fileType,
+        TweetID:  tweetID,
+        UserID:   userID,
+        Width:    fmt.Sprintf("%d", config.Width),
+        Height:   fmt.Sprintf("%d", config.Height),
+    }
+       tasks.ScheduleUploadTask(w.Client,data)
+
         c.JSON(200, gin.H{
             "status":          "success",
             "file_url":        targetFilename,

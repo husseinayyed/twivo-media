@@ -9,13 +9,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-)
-
-const (
-	ChunkSize        = 4082
-	ChunkReadTimeout = 5 * time.Second
-	MaxSize          = 20 * 1024 * 1024 // 20 MB max file upload size
 )
 
 var (
@@ -34,7 +27,6 @@ var httpClient = &http.Client{
 }
 
 func normalizeUploadError(err error) error {
-	fmt.Println("Error: ",err)
 	switch {
 	case err == nil:
 		return nil
@@ -50,65 +42,80 @@ func normalizeUploadError(err error) error {
 // StreamToWeedFiler handles uploading an incoming data stream directly to SeaweedFS Filer via HTTP PUT using an io.Pipe.
 func StreamToWeedFiler(ctx context.Context, fileUUID, fileType string, populateStream func(pw io.Writer) error) (string, error) {
 	pr, pw := io.Pipe()
-	targetFilename := fmt.Sprintf("%s%s",fileUUID, fileType)
-	fmt.Println("STREAM DEBUG targetFilename:", targetFilename)
-	// If SEAWEEDFS_FILER_URL = "http://weed-filer:8888"
-    uploadURL := fmt.Sprintf("%s/buckets/twivo/%s", WeedFilerURL, targetFilename)
+	targetFilename := fmt.Sprintf("%s%s", fileUUID, fileType)
+	
+	// Structured bucket pathway mapping
+	bucketPath := fmt.Sprintf("/buckets/twivo/%s", targetFilename)
+	uploadURL := WeedFilerURL + bucketPath
+
+	// 1. FIXED: Buffered channel size of 1 ensures the background goroutine can 
+	// always emit its result and exit, completely preventing deadlocks.
 	uploadErrChan := make(chan error, 1)
 
 	go func() {
+		// Ensure the pipe reader is closed on exit to unlock any stuck pipe writers
+		defer pr.Close()
+
 		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, pr)
 		if reqErr != nil {
-			fmt.Println("reqErr")
 			uploadErrChan <- reqErr
 			return
 		}
 		req.Header.Set("Content-Type", "application/octet-stream")
 
 		resp, respErr := httpClient.Do(req)
-		fmt.Println(respErr)
 		if respErr != nil {
-			fmt.Println("respErr")
 			uploadErrChan <- respErr
 			return
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-			fmt.Println("Weedfiler")
 			uploadErrChan <- fmt.Errorf("weedfiler returned status: %d", resp.StatusCode)
 			return
 		}
 		uploadErrChan <- nil
 	}()
 
-	if err := populateStream(pw); err != nil {
+	// 2. FIXED: Robust error collection sequence
+	populateErr := populateStream(pw)
+	if populateErr != nil {
+		// Close the pipe with the specific error to forcefully terminate the HTTP client
+		pw.CloseWithError(populateErr)
+		
 		if ctx.Err() != nil {
-			fmt.Println("ctx.error")
-			pw.CloseWithError(ctx.Err())
 			return "", normalizeUploadError(ctx.Err())
 		}
-		if errors.Is(err, io.ErrClosedPipe) || strings.Contains(err.Error(), "closed pipe") {
-			fmt.Println("ctx 2error")
-			pw.CloseWithError(ctx.Err())
+		if errors.Is(populateErr, io.ErrClosedPipe) || strings.Contains(populateErr.Error(), "closed pipe") {
 			return "", normalizeUploadError(ctx.Err())
 		}
-		fmt.Printf("ctx3Err")
-		pw.CloseWithError(err)
-		return "", normalizeUploadError(err)
+		return "", normalizeUploadError(populateErr)
 	}
 
-	if err := <-uploadErrChan; err != nil {
-		fmt.Println("ctx4error")
-		return "", normalizeUploadError(err)
+	// Safely close the pipe to signal completion to HTTP client
+	pw.Close()
+
+	// 3. FIXED: Handle immediate fallback if context cancels while waiting for server response
+	select {
+	case <-ctx.Done():
+		return "", normalizeUploadError(ctx.Err())
+	case err := <-uploadErrChan:
+		if err != nil {
+			return "", normalizeUploadError(err)
+		}
 	}
-	fmt.Println("Uploader Debug. Target file is :",targetFilename)
-	return targetFilename, nil
+
+	// Return the relative bucket pathway string for clean downstream tracking/deletion
+	return bucketPath, nil
 }
 
 // DeleteOrphanFile removes an incomplete or rejected file upload from SeaweedFS Filer
-func DeleteOrphanFile(fileURL string) {
-	deleteURL := WeedFilerURL + fileURL
+func DeleteOrphanFile(bucketPath string) {
+	// 4. FIXED: Properly absolute resolves the pathway url match
+	if !strings.HasPrefix(bucketPath, "/") {
+		bucketPath = "/" + bucketPath
+	}
+	deleteURL := WeedFilerURL + bucketPath
 
 	req, err := http.NewRequest(http.MethodDelete, deleteURL, nil)
 	if err != nil {
