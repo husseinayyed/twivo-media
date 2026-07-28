@@ -2,51 +2,80 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
-	"github.com/husseinayyed/twivo-media/internal/database/redis"
 )
 
 const (
-	WeedFilerURL     = "http://weed-filer:8888/buckets/twivo/"
 	ChunkSize        = 4082
 	ChunkReadTimeout = 5 * time.Second
 	MaxSize          = 20 * 1024 * 1024 // 20 MB max file upload size
 )
 
+var (
+	WeedFilerURL = getDefaultWeedFilerURL()
+)
+
+func getDefaultWeedFilerURL() string {
+	if url := os.Getenv("WEED_FILER_URL"); url != "" {
+		return url
+	}
+	return "http://weed-filer:8888"
+}
+
 var httpClient = &http.Client{
 	Timeout: 30 * time.Second,
 }
 
+func normalizeUploadError(err error) error {
+	fmt.Println("Error: ",err)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, context.Canceled):
+		return fmt.Errorf("upload canceled before completion")
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("upload timed out while streaming to storage")
+	default:
+		return err
+	}
+}
+
 // StreamToWeedFiler handles uploading an incoming data stream directly to SeaweedFS Filer via HTTP PUT using an io.Pipe.
-func StreamToWeedFiler(ctx context.Context, userID, tweetID, fileUUID, fileType string, populateStream func(pw io.Writer) error) (string, error) {
+func StreamToWeedFiler(ctx context.Context, fileUUID, fileType string, populateStream func(pw io.Writer) error) (string, error) {
 	pr, pw := io.Pipe()
-
-	targetFilename := fmt.Sprintf("%s/%s/%s%s", userID, tweetID, fileUUID, fileType)
-	uploadURL := WeedFilerURL + targetFilename
-
+	targetFilename := fmt.Sprintf("%s%s",fileUUID, fileType)
+	fmt.Println("STREAM DEBUG targetFilename:", targetFilename)
+	// If SEAWEEDFS_FILER_URL = "http://weed-filer:8888"
+    uploadURL := fmt.Sprintf("%s/buckets/twivo/%s", WeedFilerURL, targetFilename)
 	uploadErrChan := make(chan error, 1)
 
 	go func() {
-		defer pr.Close()
 		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, pr)
 		if reqErr != nil {
+			fmt.Println("reqErr")
 			uploadErrChan <- reqErr
 			return
 		}
 		req.Header.Set("Content-Type", "application/octet-stream")
 
 		resp, respErr := httpClient.Do(req)
+		fmt.Println(respErr)
 		if respErr != nil {
+			fmt.Println("respErr")
 			uploadErrChan <- respErr
 			return
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			fmt.Println("Weedfiler")
 			uploadErrChan <- fmt.Errorf("weedfiler returned status: %d", resp.StatusCode)
 			return
 		}
@@ -54,14 +83,26 @@ func StreamToWeedFiler(ctx context.Context, userID, tweetID, fileUUID, fileType 
 	}()
 
 	if err := populateStream(pw); err != nil {
+		if ctx.Err() != nil {
+			fmt.Println("ctx.error")
+			pw.CloseWithError(ctx.Err())
+			return "", normalizeUploadError(ctx.Err())
+		}
+		if errors.Is(err, io.ErrClosedPipe) || strings.Contains(err.Error(), "closed pipe") {
+			fmt.Println("ctx 2error")
+			pw.CloseWithError(ctx.Err())
+			return "", normalizeUploadError(ctx.Err())
+		}
+		fmt.Printf("ctx3Err")
 		pw.CloseWithError(err)
-		return "", err
+		return "", normalizeUploadError(err)
 	}
 
 	if err := <-uploadErrChan; err != nil {
-		return "", err
+		fmt.Println("ctx4error")
+		return "", normalizeUploadError(err)
 	}
-
+	fmt.Println("Uploader Debug. Target file is :",targetFilename)
 	return targetFilename, nil
 }
 
@@ -79,79 +120,4 @@ func DeleteOrphanFile(fileURL string) {
 		return
 	}
 	defer resp.Body.Close()
-}
-
-// UploadFileToWeedFiler orchestrates chunked reading with stall timeouts, checks max size limits, and streams to WeedFiler.
-func UploadFileToWeedFiler(ctx context.Context, userID, tweetID, fileUUID, fileType string, fullStream io.Reader) (string, int64, error) {
-	chunkBuffer := make([]byte, ChunkSize)
-	var totalBytesRead int64
-
-	targetFilename, uploadErr := StreamToWeedFiler(ctx, userID, tweetID, fileUUID, fileType, func(pw io.Writer) error {
-		pipeWriter, ok := pw.(*io.PipeWriter)
-		if ok {
-			defer pipeWriter.Close()
-		}
-
-		for {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-
-			readChan := make(chan struct {
-				n   int
-				err error
-			}, 1)
-
-			go func(buf []byte) {
-				rn, rErr := fullStream.Read(buf)
-				readChan <- struct {
-					n   int
-					err error
-				}{rn, rErr}
-			}(chunkBuffer)
-
-			chunkTimer := time.NewTimer(ChunkReadTimeout)
-
-			select {
-			case <-ctx.Done():
-				chunkTimer.Stop()
-				return ctx.Err()
-			case <-chunkTimer.C:
-				chunkTimer.Stop()
-				return fmt.Errorf("chunk read stall timeout exceeded")
-			case res := <-readChan:
-				chunkTimer.Stop()
-				n := res.n
-				readErr := res.err
-
-				if n > 0 {
-					totalBytesRead += int64(n)
-					if totalBytesRead > MaxSize {
-						return fmt.Errorf("file size exceeds maximum allowed size of %d bytes", MaxSize)
-					}
-
-					currentChunk := chunkBuffer[:n]
-					if _, writeErr := pw.Write(currentChunk); writeErr != nil {
-						return writeErr
-					}
-				}
-
-				if readErr != nil {
-					if readErr == io.EOF {
-						return nil
-					}
-					return readErr
-				}
-			}
-		}
-	})
-
-	if uploadErr != nil {
-		if targetFilename != "" {
-			go DeleteOrphanFile(targetFilename)
-		}
-		return "", 0, uploadErr
-	}
-	redis.RedisClient.Set(ctx, targetFilename, totalBytesRead, 0)
-	return targetFilename, totalBytesRead, nil
 }
