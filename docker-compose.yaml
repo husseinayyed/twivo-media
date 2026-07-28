@@ -17,6 +17,7 @@ services:
       - ./nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
     depends_on:
       - redis
+      - twivo-app
     networks:
       - twivo-network
 
@@ -78,7 +79,7 @@ services:
     networks:
       - twivo-network
   
-  app:
+  twivo-app:
     build:
       context: .
       target: dev
