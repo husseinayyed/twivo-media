@@ -7,11 +7,12 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
-	"os"
 	"sync"
 	"time"
+
+	pprof "github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
-	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/husseinayyed/twivo-media/internal/middleware"
 	"github.com/husseinayyed/twivo-media/internal/reader"
 	"github.com/husseinayyed/twivo-media/internal/storage"
 	"github.com/husseinayyed/twivo-media/internal/tasks"
@@ -31,7 +32,9 @@ const (
 
 func main() {
 	router := gin.Default()
+	pprof.Register(router) // Register pprof routes for profiling and debugging
 	port := "8020"
+  
     // Initialize sybnc.Pool for chunk buffers to reduce memory allocations during file uploads
 	chunkPool := sync.Pool{
 		New: func() any {
@@ -39,12 +42,7 @@ func main() {
 			return &buf
 		},
 	}
-    lruCache, err := lru.New[string, string](1000)
-    if err != nil {
-        fmt.Println("Error creating LRU cache:", err)
-        os.Exit(1)
-    }
-    _ = lruCache // Lru will be used later for caching purposes, currently it's not utilized in the code.
+    
 	w, err := worker.NewWorker() 
 	go func() {
 		if err != nil {
@@ -59,9 +57,9 @@ func main() {
 		c.JSON(200, gin.H{"ping": "pong"})
 	})
 
-	router.POST("/upload", func(c *gin.Context) {
-		userID := c.GetHeader("X-User-ID")
-		tweetID := c.GetHeader("X-Tweet-ID")
+	router.POST("/upload",middleware.VerifyToken, func(c *gin.Context) {
+		userID := c.GetHeader("X-USER-ID")
+		tweetID := c.GetHeader("X-TWEET-ID")
         // Check for missing required headers and return a 400 error if they are not provided
 		if userID == "" || tweetID == "" {
 			c.JSON(400, gin.H{"error": "Missing required headers"})
@@ -146,6 +144,7 @@ func main() {
 				// Attempt to delete the orphaned file in a separate goroutine to avoid blocking the response
 				go storage.DeleteOrphanFile(targetFilename)
 			}
+			fmt.Println("Error uploading file to Weed Filer:", uploadErr)
 			c.JSON(502, gin.H{"error": "Failed to persist file in storage backend"})
 			return
 		}
