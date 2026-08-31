@@ -1,0 +1,141 @@
+package middleware
+
+import (
+	"crypto/ed25519"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"os"
+	"time"
+	"github.com/gin-gonic/gin"
+	jwt "github.com/golang-jwt/jwt/v5"
+	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/husseinayyed/twivo-media/internal/database/redis"
+)
+
+var (
+	lruCacheToken   *lru.Cache[string, bool] // LRU cache for storing recently validated JWT IDs
+	errToken        error
+	lruCacheJTI     *lru.Cache[string, bool] // LRU cache for storing recently validated JWT IDs
+	errJTI          error
+	JWTIssuer       = "twivo-backend"
+	JWTAudience     = "twivo-media"
+	PUBLIC_KEY_PATH = "keys/public.pem"
+	ErrInvalidToken = errors.New("the provided token is invalid")
+    tokenBlockDuration = 24 * time.Hour // 24 Hours in time.Duration nanoseconds
+
+	// Global variable to hold your loaded public key across your application
+	PublicSigningKey ed25519.PublicKey
+)
+
+func init() {
+	// Read and parse your Ed25519 public key file
+	lruCacheToken, errToken = lru.New[string, bool](10000) // Cache size of 10,000 entries
+	lruCacheJTI, errJTI = lru.New[string, bool](10000)     // Cache size of 10,000 entries
+	if errToken != nil {
+		fmt.Println("Error creating LRU cache:", errToken)
+		os.Exit(1)
+	}
+	if errJTI != nil {
+		fmt.Println("Error creating LRU cache for JTI:", errJTI)
+		os.Exit(1)
+	}
+	_ = lruCacheToken // Lru will be used later for caching purposes
+	_ = lruCacheJTI   // Lru will be used later for caching purposes
+	b, err := os.ReadFile(PUBLIC_KEY_PATH)
+	if err != nil {
+		panic("failed to read public_key.pem: " + err.Error())
+	}
+
+	block, _ := pem.Decode(b)
+	if block == nil {
+		panic("failed to decode valid PEM block from public key")
+	}
+
+	pubKeyRaw, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		panic("failed to parse PKIX public key: " + err.Error())
+	}
+
+	// 3. Store the type-asserted key into your global variable
+	var ok bool
+	PublicSigningKey, ok = pubKeyRaw.(ed25519.PublicKey)
+	if !ok {
+		panic("key inside public_key.pem is not a valid Ed25519 public key")
+	}
+}
+func VerifyToken(c *gin.Context) {
+	tokenString := c.GetHeader("X-TWIVO-BACKEND")
+	ctx := c.Request.Context()
+	if tokenString == "" || len(tokenString) < 10 {
+		c.AbortWithStatusJSON(401, gin.H{"error": "Missing token"})
+		return
+	}
+	r := lruCacheToken.Contains(tokenString)
+	if r {
+		c.AbortWithStatusJSON(401, gin.H{"error": "Token has been revoked"})
+		return
+	}
+	lruCacheToken.Add(tokenString, true) // Add the token to the cache to mark it as revoked
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
+			return nil, ErrInvalidToken
+		}
+		return PublicSigningKey, nil
+	})
+
+	if err != nil || !token.Valid {
+		c.AbortWithStatusJSON(401, gin.H{"error": "Invalid token"})
+		return
+	}
+	tokenClaims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		c.AbortWithStatusJSON(401, gin.H{"error": "Invalid token claims"})
+		return
+	}
+	// 1. Safely extract and save all claims as strings
+	iss, _ := tokenClaims["iss"].(string)
+	aud, _ := tokenClaims["aud"].(string)
+	sub, _ := tokenClaims["sub"].(string)
+	jti, _ := tokenClaims["jti"].(string)
+	action, _ := tokenClaims["action"].(string)
+	id, _ := tokenClaims["id"].(string)
+
+	if iss != JWTIssuer || aud != JWTAudience || aud == "" || sub == "" || jti == "" || action == "" || id == "" {
+		c.AbortWithStatusJSON(401, gin.H{"error": "Invalid or missing token claims"})
+		return
+	}
+	if lruCacheJTI.Contains(jti) {
+		c.AbortWithStatusJSON(401, gin.H{"error": "Token has been revoked"})
+		return
+	}
+	// Set a 24-hour expiration for the JTI in Redis to prevent replay attacks
+	success, err := redis.RedisClient.SetNX(ctx, jti, "true", tokenBlockDuration).Result()
+	
+	if err != nil {
+		fmt.Println("Database connectivity error setting JTI registry:", err)
+		c.AbortWithStatusJSON(500, gin.H{"error": "Internal server validation error"})
+		return
+	}
+
+	// 3. Evaluate the result
+	if !success {
+		// If success is false, the JTI ALREADY existed in Redis. 
+		// This means another instance or request already consumed it! Block it.
+		lruCacheJTI.Add(jti, true)           
+		lruCacheToken.Add(tokenString, true) 
+		c.AbortWithStatusJSON(401, gin.H{"error": "Token has already been consumed"})
+		return
+	}
+
+	// If success is true, Redis successfully saved the key, meaning it was a FRESH token.
+	// Sync the consumption status to local memory too
+	lruCacheToken.Add(tokenString, true)
+	lruCacheJTI.Add(jti, true)
+
+	c.Header("X-USER-ID", sub)
+	c.Header("X-TWEET-ID", id)
+	c.Next()
+
+}
