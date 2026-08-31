@@ -9,10 +9,13 @@ import (
 	"os"
 	"strings"
 	"time"
+	"net"
+	"github.com/rs/dnscache"
 )
 
 var (
 	WeedFilerURL = getDefaultWeedFilerURL()
+	r = &dnscache.Resolver{}
 )
 
 func getDefaultWeedFilerURL() string {
@@ -22,8 +25,32 @@ func getDefaultWeedFilerURL() string {
 	return "http://weed-filer:8888"
 }
 
+
 var httpClient = &http.Client{
-	Timeout: 30 * time.Second,
+    Transport: &http.Transport{
+        MaxIdleConns:        100,
+        MaxIdleConnsPerHost: 100,
+        IdleConnTimeout:     90 * time.Second,
+        DialContext: func(ctx context.Context, network string, addr string) (conn net.Conn, err error) {
+        host, port, err := net.SplitHostPort(addr)
+        if err != nil {
+            return nil, err
+        }
+        ips, err := r.LookupHost(ctx, host)
+        if err != nil {
+            return nil, err
+        }
+        for _, ip := range ips {
+            var dialer net.Dialer
+            conn, err = dialer.DialContext(ctx, network, net.JoinHostPort(ip, port))
+            if err == nil {
+                break
+            }
+        }
+        return
+    },
+    },
+    Timeout: 60 * time.Second,
 }
 
 func normalizeUploadError(err error) error {
@@ -65,6 +92,7 @@ func StreamToWeedFiler(ctx context.Context, fileUUID, fileType string, populateS
 
 		resp, respErr := httpClient.Do(req)
 		if respErr != nil {
+			fmt.Printf("Error during HTTP request to WeedFiler: %v\n", respErr)
 			uploadErrChan <- respErr
 			return
 		}
