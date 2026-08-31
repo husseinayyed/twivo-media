@@ -101,6 +101,11 @@ services:
         condition: service_started
     expose:
       - "8020"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
   imgproxy:
     image: ghcr.io/imgproxy/imgproxy:latest
     container_name: imgproxy
