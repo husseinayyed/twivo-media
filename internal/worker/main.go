@@ -32,7 +32,7 @@ func (w *Worker) Start() {
 	srv := asynq.NewServer(
 		asynq.RedisClientOpt{Addr: redis.RedisClient.Options().Addr},
 		asynq.Config{
-			Concurrency: 10,
+			Concurrency: 20,
 			Queues: map[string]int{
 				"critical": 6,
 				"high":     3,
@@ -81,6 +81,7 @@ func (w *Worker) handleUploadFileTask(ctx context.Context, t *asynq.Task) error 
         return fmt.Errorf("failed to deserialize payload: %v", err)
     }
     streamKey := "uploads:stream"
+    nanoKey := fmt.Sprintf("nano:%v", payload.FileUUID)
     
     // Prepare the event payload
     eventData := map[string]any{
@@ -92,26 +93,26 @@ func (w *Worker) handleUploadFileTask(ctx context.Context, t *asynq.Task) error 
         "height":    payload.Height,
     }
 
+    // Use pipeline for atomic operations
+    pipe := redis.RedisClient.TxPipeline()
+    
     // Append data to the stream using XAdd
-    err := redis.RedisClient.XAdd(ctx, &goredis.XAddArgs{
+    pipe.XAdd(ctx, &goredis.XAddArgs{
         Stream: streamKey,
         ID:     "*",
         Values: eventData,
-    }).Err()
-    if err != nil {
-        return fmt.Errorf("failed to append upload event to stream: %v", err)
-    }
+    })
     
-    nanoKey := fmt.Sprintf("nano:%v", payload.FileUUID)
-
     // Store the hash data safely
-    if err := redis.RedisClient.HSet(ctx, nanoKey, eventData).Err(); err != nil {
-        return fmt.Errorf("failed to set hash data: %v", err)
-    }
+    pipe.HSet(ctx, nanoKey, eventData)
     
     // Set a 24-hour TTL on the hash key so Nginx can read it within that window
-    if err := redis.RedisClient.Expire(ctx, nanoKey, 24*time.Hour).Err(); err != nil {
-        return fmt.Errorf("failed to set hash TTL: %v", err)
+    pipe.Expire(ctx, nanoKey, 24*time.Hour)
+    
+    // Execute pipeline
+    _, err := pipe.Exec(ctx)
+    if err != nil {
+        return fmt.Errorf("failed to execute pipeline: %v", err)
     }
 
     return nil
