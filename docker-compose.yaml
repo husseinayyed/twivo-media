@@ -1,5 +1,5 @@
 services:
-  gateway:
+  nginx:
     image: nginx:alpine
     ports:
       - "80:80"
@@ -36,7 +36,6 @@ services:
 
   weed-master:
     image: chrislusf/seaweedfs:latest
-    container_name: twivo-weed-master
     restart: unless-stopped
     command: master -ip=weed-master
     ports:
@@ -48,7 +47,6 @@ services:
 
   weed-volume:
     image: chrislusf/seaweedfs:latest
-    container_name: twivo-weed-volume
     restart: unless-stopped
     command: volume -mserver=weed-master:9333 -port=8085 -max=100 -dir=/data
     ports:
@@ -62,7 +60,6 @@ services:
 
   weed-filer:
     image: chrislusf/seaweedfs:latest
-    container_name: twivo-weed-filer
     restart: unless-stopped
     command: filer -master=weed-master:9333
     ports:
