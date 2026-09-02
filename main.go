@@ -18,11 +18,13 @@ func main() {
 	pprof.Register(router) // Register pprof routes for profiling and debugging
 	port := "8020"
 	handler.InitWorker() // Initialize the worker for handling background tasks
-
+	handler.InitImageCache() // Initialize the image cache for storing image metadata
+	
 	router.GET("/ping", func(c *gin.Context) {
 		c.JSON(200, gin.H{"ping": "pong"})
 	})
 	router.POST("/upload", middleware.VerifyToken, handler.UploadRoute)
-	
+	router.GET("/i/:id", handler.ImageRoute)
+
 	router.Run(fmt.Sprintf(":%v", port))
 }

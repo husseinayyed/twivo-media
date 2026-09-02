@@ -1,13 +1,14 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"sync"
 	"time"
-	"bytes"
+
 	"github.com/gin-gonic/gin"
 	"github.com/husseinayyed/twivo-media/internal/reader"
 	"github.com/husseinayyed/twivo-media/internal/storage"
@@ -57,7 +58,7 @@ func UploadRoute(c *gin.Context) {
 			return
 		} 
 
-		fileUUID, err := gonanoid.New()
+		fileUUID, err := gonanoid.New(16) // Generate a unique identifier for the uploaded file
 		if err != nil {
 			c.JSON(500, gin.H{"error": "Failed to generate file identifier"})
 			return
@@ -140,6 +141,10 @@ func UploadRoute(c *gin.Context) {
 			return
 		}
 		// Schedule the upload task for further processing
+		if w == nil || w.Client == nil {
+			c.JSON(500, gin.H{"error": "worker unavailable"})
+			return
+		}
 		data := tasks.UploadPayload{
 			FileUUID: fileUUID,
 			FileType: fileType,
@@ -148,7 +153,10 @@ func UploadRoute(c *gin.Context) {
 			Width:    fmt.Sprintf("%d", config.Width),
 			Height:   fmt.Sprintf("%d", config.Height),
 		}
-		tasks.ScheduleUploadTask(w.Client, data)
+		if err := tasks.ScheduleUploadTask(w.Client, data); err != nil {
+			c.JSON(500, gin.H{"error": "failed to schedule upload task"})
+			return
+		}
 		// Return a successful response with the file details
 		c.JSON(200, gin.H{
 			"status":          "success",
