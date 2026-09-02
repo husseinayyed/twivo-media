@@ -27,4 +27,4 @@ USER appuser
 
 EXPOSE 8020
 
-CMD ["./app"]
+CMD ["./main"]

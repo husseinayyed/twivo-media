@@ -1,11 +1,6 @@
-version: '3.8'
-
-
 services:
   gateway:
-    build:
-      context: .
-      dockerfile: gateway.Dockerfile
+    image: nginx:alpine
     ports:
       - "80:80"
     environment:
@@ -13,8 +8,9 @@ services:
       - JWT_ISS=${JWT_ISS}
       - JWT_AUD=${JWT_AUD}
     volumes:
-      - ${PUBLIC_KEY_PATH}:/app/keys/public.pem:ro
-      - ./nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+    - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    - nginx-conf:/var/cache/nginx
+
     depends_on:
       - redis
       - twivo-app
@@ -87,7 +83,7 @@ services:
     restart: unless-stopped
     volumes:
       - .:/app
-      - ${PUBLIC_KEY_PATH}:/app/keys/public.pem:ro
+      - ./keys/public.pem:/app/keys/public.pem:ro
     environment:
       - REDIS_URL=${REDIS_URL}
       - SSL_CERT_PATH=/app/keys/public.pem
@@ -125,6 +121,7 @@ volumes:
   seaweed-master-data:
   seaweed-volume-data:
   seaweed-filer-data:
+  nginx-conf:
 
 networks:
   twivo-network:
