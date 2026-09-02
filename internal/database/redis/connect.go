@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
+
 	"github.com/redis/go-redis/v9"
 )
 
@@ -20,9 +22,13 @@ func ConnectRedis() (redisClient *redis.Client, err error) {
 	}
 
 	RedisClient = redis.NewClient(&redis.Options{
-		Addr:     redisHost,
-		DB:       0,
-	})
+    Addr:            redisHost,        // Redis server address
+    PoolSize:        20,               // Maximum open connections
+    MinIdleConns:    5,                // Minimum idle connections to maintain
+    MaxIdleConns:    10,               // Maximum idle connections to keep
+    ConnMaxIdleTime: 5 * time.Minute,  // Close idle connections after 5 minutes
+})
+
 	ctx := context.Background()
 	if err := RedisClient.Ping(ctx).Err(); err != nil {
 		fmt.Println("Error connecting to Redis:", err)
