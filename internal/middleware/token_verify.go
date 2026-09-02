@@ -134,8 +134,9 @@ func VerifyToken(c *gin.Context) {
 	lruCacheToken.Add(tokenString, true)
 	lruCacheJTI.Add(jti, true)
 
-	c.Header("X-USER-ID", sub)
-	c.Header("X-TWEET-ID", id)
+	c.Request.Header.Set("X-USER-ID", sub)
+	c.Request.Header.Set("X-TWEET-ID", id)
+
 	c.Next()
 
 }
