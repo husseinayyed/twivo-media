@@ -10,6 +10,7 @@ type UploadPayload struct {
     UserID   string `json:"user_id"`
     TweetID  string `json:"tweet_id"`
     FileUUID string `json:"file_uuid"`
+	BelongsTo string `json:"belongs_to"`
     FileType string `json:"file_type"`
     Width    string `json:"width"`
     Height   string `json:"height"`
