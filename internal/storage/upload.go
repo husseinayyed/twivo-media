@@ -105,7 +105,7 @@ func StreamToWeedFiler(ctx context.Context, fileUUID, fileType string, populateS
 		uploadErrChan <- nil
 	}()
 
-	// 2. FIXED: Robust error collection sequence
+	// 2. Populate the pipe writer with the upload data in a separate goroutine
 	populateErr := populateStream(pw)
 	if populateErr != nil {
 		// Close the pipe with the specific error to forcefully terminate the HTTP client
