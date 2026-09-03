@@ -79,7 +79,7 @@ func (w *Worker) Start() {
 
 func (w *Worker) handleUploadFileTask(ctx context.Context, t *asynq.Task) error {
     var payload tasks.UploadPayload
-
+	fmt.Println(payload)
     if err := payload.Deserialize(t.Payload()); err != nil {
         return fmt.Errorf("failed to deserialize payload: %v", err)
     }
@@ -91,6 +91,7 @@ func (w *Worker) handleUploadFileTask(ctx context.Context, t *asynq.Task) error 
         "user_id":   payload.UserID,
         "tweet_id":  payload.TweetID,
         "file_uuid": payload.FileUUID,
+		"belongs_to": payload.BelongsTo,
         "file_type": payload.FileType,
         "width":     payload.Width,
         "height":    payload.Height,
@@ -125,9 +126,14 @@ func (w *Worker) handleUploadFileTask(ctx context.Context, t *asynq.Task) error 
 	if err2 != nil {
 		return fmt.Errorf("invalid image height %q: %v", payload.Height, err2)
 	}
+
 	types.LruCacheNanoId.Add(payload.FileUUID, &types.ImageResponse{
 		Width:  uint16(width),
 		Height: uint16(height),
+		FileUUID: payload.FileUUID,
+		BelongsTo: payload.BelongsTo,
+		OwnerId: payload.UserID,
+		TweetId: payload.TweetID,
 		FileType: payload.FileType,
 	})
 	return nil
