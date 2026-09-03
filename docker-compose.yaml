@@ -38,8 +38,8 @@ services:
     image: chrislusf/seaweedfs:latest
     restart: unless-stopped
     command: master -ip=weed-master
-    ports:
-      - "9333:9333"
+    expose:
+      - "9333"
     volumes:
       - seaweed-master-data:/data
     networks:
@@ -49,8 +49,8 @@ services:
     image: chrislusf/seaweedfs:latest
     restart: unless-stopped
     command: volume -mserver=weed-master:9333 -port=8085 -max=100 -dir=/data
-    ports:
-      - "8085:8085"
+    expose:
+      - "8085"
     volumes:
       - seaweed-volume-data:/data
     depends_on:
@@ -62,8 +62,8 @@ services:
     image: chrislusf/seaweedfs:latest
     restart: unless-stopped
     command: filer -master=weed-master:9333
-    ports:
-      - "8888:8888"
+    expose:
+      - "8888"
     volumes:
       - seaweed-filer-data:/data
     depends_on:
@@ -103,14 +103,15 @@ services:
     image: ghcr.io/imgproxy/imgproxy:latest
     container_name: imgproxy
     restart: always
-    ports:
-      - "8000:8080"
+    expose:
+      - "8080"
     environment:
       IMGPROXY_INSECURE: "true"
       IMGPROXY_ENABLE_WEBP_DETECTION: "true"
       IMGPROXY_TTL: "2592000"
       IMGPROXY_MAX_SRC_FILE_SIZE: "15728640"
       IMGPROXY_IGNORE_SIGNATURE_ERRORS: "true"
+      IMGPROXY_ALLOWED_SOURCES: "http://weed-filer:8888/"
     networks:
       - twivo-network
 
