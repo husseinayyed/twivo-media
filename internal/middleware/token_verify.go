@@ -9,16 +9,13 @@ import (
 	"os"
 	"time"
 	"github.com/gin-gonic/gin"
+	"github.com/husseinayyed/twivo-media/internal/cache"
 	jwt "github.com/golang-jwt/jwt/v5"
-	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/husseinayyed/twivo-media/internal/database/redis"
 )
 
 var (
-	lruCacheToken   *lru.Cache[string, bool] // LRU cache for storing recently validated JWT IDs
-	errToken        error
-	lruCacheJTI     *lru.Cache[string, bool] // LRU cache for storing recently validated JWT IDs
-	errJTI          error
+	
 	JWTIssuer       = "twivo-backend"
 	JWTAudience     = "twivo-media"
 	PUBLIC_KEY_PATH = "keys/public.pem"
@@ -31,18 +28,6 @@ var (
 
 func init() {
 	// Read and parse your Ed25519 public key file
-	lruCacheToken, errToken = lru.New[string, bool](10000) // Cache size of 10,000 entries
-	lruCacheJTI, errJTI = lru.New[string, bool](10000)     // Cache size of 10,000 entries
-	if errToken != nil {
-		fmt.Println("Error creating LRU cache:", errToken)
-		os.Exit(1)
-	}
-	if errJTI != nil {
-		fmt.Println("Error creating LRU cache for JTI:", errJTI)
-		os.Exit(1)
-	}
-	_ = lruCacheToken // Lru will be used later for caching purposes
-	_ = lruCacheJTI   // Lru will be used later for caching purposes
 	b, err := os.ReadFile(PUBLIC_KEY_PATH)
 	if err != nil {
 		panic("failed to read public_key.pem: " + err.Error())
@@ -72,12 +57,12 @@ func VerifyToken(c *gin.Context) {
 		c.AbortWithStatusJSON(401, gin.H{"error": "Missing token"})
 		return
 	}
-	r := lruCacheToken.Contains(tokenString)
+	r := cache.LruCacheToken.Contains(tokenString)
 	if r {
 		c.AbortWithStatusJSON(401, gin.H{"error": "Token has been revoked"})
 		return
 	}
-	lruCacheToken.Add(tokenString, true) // Add the token to the cache to mark it as revoked
+	cache.LruCacheToken.Add(tokenString, true) // Add the token to the cache to mark it as revoked
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
 			return nil, ErrInvalidToken
@@ -106,7 +91,7 @@ func VerifyToken(c *gin.Context) {
 		c.AbortWithStatusJSON(401, gin.H{"error": "Invalid or missing token claims"})
 		return
 	}
-	if lruCacheJTI.Contains(jti) {
+	if cache.LruCacheJTI.Contains(jti) {
 		c.AbortWithStatusJSON(401, gin.H{"error": "Token has been revoked"})
 		return
 	}
@@ -123,16 +108,16 @@ func VerifyToken(c *gin.Context) {
 	if !success {
 		// If success is false, the JTI ALREADY existed in Redis. 
 		// This means another instance or request already consumed it! Block it.
-		lruCacheJTI.Add(jti, true)           
-		lruCacheToken.Add(tokenString, true) 
+		cache.LruCacheJTI.Add(jti, true)           
+		cache.LruCacheToken.Add(tokenString, true) 
 		c.AbortWithStatusJSON(401, gin.H{"error": "Token has already been consumed"})
 		return
 	}
 
 	// If success is true, Redis successfully saved the key, meaning it was a FRESH token.
 	// Sync the consumption status to local memory too
-	lruCacheToken.Add(tokenString, true)
-	lruCacheJTI.Add(jti, true)
+	cache.LruCacheToken.Add(tokenString, true)
+	cache.LruCacheJTI.Add(jti, true)
 
 	c.Request.Header.Set("X-USER-ID", sub)
 	c.Request.Header.Set("X-TWEET-ID", id)

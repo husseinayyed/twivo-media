@@ -21,7 +21,6 @@ func main() {
 	port := "8020"
 	cache.InitCache() // Initialize the LRU cache for storing image checksums
 	handler.InitWorker() // Initialize the worker for handling background tasks
-	handler.InitImageCache() // Initialize the image cache for storing image metadata
 	
 	router.GET("/ping", func(c *gin.Context) {
 		c.JSON(200, gin.H{"ping": "pong"})

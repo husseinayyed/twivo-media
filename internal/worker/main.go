@@ -13,7 +13,7 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/husseinayyed/twivo-media/internal/database/redis"
 	"github.com/husseinayyed/twivo-media/internal/tasks"
-	"github.com/husseinayyed/twivo-media/internal/types"
+	"github.com/husseinayyed/twivo-media/internal/cache"
 	goredis "github.com/redis/go-redis/v9"
 )
 type Worker struct {
@@ -127,7 +127,7 @@ func (w *Worker) handleUploadFileTask(ctx context.Context, t *asynq.Task) error 
 		return fmt.Errorf("invalid image height %q: %v", payload.Height, err2)
 	}
 
-	types.LruCacheNanoId.Add(payload.FileUUID, &types.ImageResponse{
+	cache.LruCacheNanoId.Add(payload.FileUUID, &cache.ImageResponse{
 		Width:  uint16(width),
 		Height: uint16(height),
 		FileUUID: payload.FileUUID,

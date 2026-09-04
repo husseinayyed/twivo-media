@@ -8,9 +8,8 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/husseinayyed/twivo-media/internal/database/redis"
-	"github.com/husseinayyed/twivo-media/internal/types"
+    "github.com/husseinayyed/twivo-media/internal/cache"
 )
 
 var imgproxyProxy = httputil.NewSingleHostReverseProxy(&url.URL{
@@ -26,7 +25,7 @@ func init() {
     }
 }
 
-func ServeImageDirect(c *gin.Context, imageID string, v *types.ImageResponse) {
+func ServeImageDirect(c *gin.Context, imageID string, v *cache.ImageResponse) {
     targetID := v.BelongsTo
 
     path := fmt.Sprintf("/unsafe/resize:fit:%d:%d/f:webp/plain/http://weed-filer:8888/buckets/twivo/%s%s",
@@ -35,14 +34,7 @@ func ServeImageDirect(c *gin.Context, imageID string, v *types.ImageResponse) {
     imgproxyProxy.ServeHTTP(c.Writer, c.Request)
 }
 
-func InitImageCache() {
-    cache, err := lru.New[string, *types.ImageResponse](100000)
-    if err != nil {
-        fmt.Println("Error creating LRU cache for image responses:", err)
-        return
-    }
-    types.LruCacheNanoId = cache
-}
+
 
 func ImageRoute(c *gin.Context) {
     imageID := c.Param("id")
@@ -52,7 +44,7 @@ func ImageRoute(c *gin.Context) {
     }
 
     // 1. LRU Cache
-    if imageResponse, found := types.LruCacheNanoId.Get(imageID); found {
+    if imageResponse, found := cache.LruCacheNanoId.Get(imageID); found {
         ServeImageDirect(c, imageID, imageResponse)
         return
     }
@@ -77,14 +69,14 @@ func ImageRoute(c *gin.Context) {
         belongsTo := hashData["belongs_to"]
         fileType := hashData["file_type"]
 
-        data := &types.ImageResponse{
+        data := &cache.ImageResponse{
             Width:     uint16(width),
             Height:    uint16(height),
             FileType:  fileType,
             BelongsTo: belongsTo,
         }
 
-        types.LruCacheNanoId.Add(imageID, data)
+        cache.LruCacheNanoId.Add(imageID, data)
         ServeImageDirect(c, imageID, data)
         return 
     }
