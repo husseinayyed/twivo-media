@@ -46,7 +46,6 @@ func InitImageCache() {
 
 func ImageRoute(c *gin.Context) {
     imageID := c.Param("id")
-    fmt.Println("Received request for image ID:", imageID)
     if imageID == "" {
         c.JSON(400, gin.H{"error": "Missing required parameter"})
         return
@@ -89,7 +88,5 @@ func ImageRoute(c *gin.Context) {
         ServeImageDirect(c, imageID, data)
         return 
     }
-
-    fmt.Println("Image not found in Redis for ID:", imageID)
     c.JSON(404, gin.H{"error": "Image not found"})
 }
