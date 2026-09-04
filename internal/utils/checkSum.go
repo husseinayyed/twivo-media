@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	"github.com/gin-gonic/gin"
-	goRedis "github.com/redis/go-redis/v9"
 	"github.com/husseinayyed/twivo-media/internal/cache"
 	"github.com/husseinayyed/twivo-media/internal/database/redis"
+	goRedis "github.com/redis/go-redis/v9"
 )
 
 // CheckFileIfRepeated checks if a file with the given checksum already exists.
@@ -32,20 +32,20 @@ func CheckFileIfRepeated(c *gin.Context, ctx context.Context, checksumHex string
 
 	// 2. Lua script for atomic get-or-create (prevents race conditions)
 	script := goRedis.NewScript(`
-		local key = KEYS[1]
-		local nanoId = ARGV[1]
-		local userId = ARGV[2]
+    local key = KEYS[1]
+    local nanoId = ARGV[1]
+    local userId = ARGV[2]
 
-		local exists = redis.call('EXISTS', key)
-		if exists == 1 then
-			local data = redis.call('HGETALL', key)
-			return {1, data.nanoId, data.userId}
-		else
-			redis.call('HSET', key, 'nanoId', nanoId, 'userId', userId)
-			redis.call('EXPIRE', key, 86400) -- 24 hours
-			return {0, nanoId, userId}
-		end
-	`)
+    local exists = redis.call('EXISTS', key)
+    if exists == 1 then
+        local fields = redis.call('HMGET', key, 'nanoId', 'userId')
+        return {1, fields[1] or '', fields[2] or ''}
+    else
+        redis.call('HSET', key, 'nanoId', nanoId, 'userId', userId)
+        redis.call('EXPIRE', key, 86400)
+        return {0, nanoId, userId}
+    end
+`)
 
 	// 3. Execute the script atomically
 	result, err := script.Run(ctx, redis.RedisClient, []string{key}, fileUUID, userId).Result()
@@ -66,8 +66,8 @@ func CheckFileIfRepeated(c *gin.Context, ctx context.Context, checksumHex string
 
 	// 5. Update LRU cache for faster future lookups
 	cache.LruCacheCheckSum.Add(key, &cache.CheckSumResponse{
-		NanoId:    existingNanoId,
-		UserId:    existingUserId,
+		NanoId: existingNanoId,
+		UserId: existingUserId,
 	})
 
 	// 6. Return results
