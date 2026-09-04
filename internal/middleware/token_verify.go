@@ -16,11 +16,11 @@ import (
 
 var (
 	
-	JWTIssuer       = "twivo-backend"
-	JWTAudience     = "twivo-media"
+	JWTIssuer       = "twivo"
+	JWTAudience     = "media"
 	PUBLIC_KEY_PATH = "keys/public.pem"
 	ErrInvalidToken = errors.New("the provided token is invalid")
-    tokenBlockDuration = 24 * time.Hour // 24 Hours in time.Duration nanoseconds
+    tokenBlockDuration = 3 * time.Minute // 3 minutes in time.Duration nanoseconds
 
 	// Global variable to hold your loaded public key across your application
 	PublicSigningKey ed25519.PublicKey
@@ -84,10 +84,9 @@ func VerifyToken(c *gin.Context) {
 	aud, _ := tokenClaims["aud"].(string)
 	sub, _ := tokenClaims["sub"].(string)
 	jti, _ := tokenClaims["jti"].(string)
-	action, _ := tokenClaims["action"].(string)
 	id, _ := tokenClaims["id"].(string)
 
-	if iss != JWTIssuer || aud != JWTAudience || aud == "" || sub == "" || jti == "" || action == "" || id == "" {
+	if iss != JWTIssuer || aud != JWTAudience || aud == "" || sub == "" || jti == "" || id == "" {
 		c.AbortWithStatusJSON(401, gin.H{"error": "Invalid or missing token claims"})
 		return
 	}
