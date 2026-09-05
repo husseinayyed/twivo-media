@@ -26,8 +26,8 @@
 
 - [x] Calculate SHA-256 while streaming uploads.
       (Added hasher := sha256.New() + io.TeeReader in upload_route.go.)
-- [ ] Store SHA-256 for integrity checks and exact duplicate detection.
-      (Calculated but not stored yet – no DB schema changes for SHA-256.)
+- [x] Store SHA-256 checksum records for exact duplicate detection.
+      (Stored in Redis under checksum keys; durable integrity metadata is still pending.)
 - [ ] Calculate perceptual hashes (pHash) for images.
       (Not implemented.)
 - [ ] Add tests for hash consistency and invalid image data.
@@ -43,13 +43,12 @@
       (Not implemented.)
 - [ ] Verify ownership before allowing deletion.
       (Not implemented as a separate endpoint.)
-- [x] Delete files from SeaweedFS and remove their MongoDB metadata.
-      (Added go storage.DeleteOrphanFile(targetFilename) for duplicate-file cleanup.
-       SeaweedFS deletion is done; MongoDB part is blocked by MongoDB not being added yet.)
+- [ ] Delete files from SeaweedFS and remove their MongoDB metadata.
+      (SeaweedFS duplicate cleanup exists; MongoDB metadata deletion is pending.)
 - [ ] Invalidate Redis, LRU, and Nginx cache entries after deletion.
       (Not implemented.)
-- [x] Add orphaned-file cleanup jobs.
-      (Deletion is triggered inline for duplicates via goroutine – partial.)
+- [ ] Add orphaned-file cleanup jobs.
+      (Inline duplicate cleanup exists; durable cleanup jobs are pending.)
 - [ ] Make deletion idempotent.
       (Not explicitly handled.)
 
@@ -59,12 +58,14 @@
       (Already existed with size 100,000; now extended with BelongsTo, OwnerId, etc.)
 - [ ] Add TTL support and cache invalidation.
       (Not added – LRU is size‑bounded with no TTL.)
-- [x] Use Redis and MongoDB as fallbacks after LRU cache misses.
-      (Redis is already used as fallback. MongoDB not yet.)
+- [ ] Use Redis and MongoDB as fallbacks after LRU cache misses.
+      (Redis is implemented; MongoDB is pending.)
 - [ ] Track cache hits, misses, and evictions.
       (Only Nginx adds X‑Cache‑Status; internal LRU hit/miss not tracked.)
 - [x] Configure Nginx to cache successful image responses.
       (Done – proxy_cache and proxy_cache_valid are set.)
+- [x] Configure Nginx to cache image 404 responses for one minute.
+      (Done – proxy_cache_valid 404 1m.)
 
 ## Cuckoo Filter
 
@@ -79,7 +80,8 @@
 ## Abuse Protection and Reliability
 
 - [ ] Add authenticated per‑user limits in Go.
-- [ ] Apply separate limits to uploads and image delivery.
+- [x] Apply separate Nginx limits to uploads and image delivery.
+      (Done – upload_zone and image_zone are configured in nginx.conf.)
 - [ ] Add bounded worker queues and request timeouts.
 - [ ] Add metrics for rejected requests, cache performance, backend failures, and filter saturation.
 - [ ] Add integration tests for Redis, MongoDB, SeaweedFS, and Nginx.
@@ -88,7 +90,7 @@
 
 ## Documentation
 
-- [ ] Update `README.md` after the OpenResty removal.
+- [x] Update `README.md` after the OpenResty removal.
 - [ ] Document MongoDB environment variables.
 - [ ] Document upload, retrieval, and deletion APIs.
 - [ ] Document cache invalidation behavior.
