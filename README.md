@@ -1,4 +1,4 @@
-# <img src="docs/icon.png" width="30" height="30" /> Twivo Media
+# <img src="docs/icon.png" width="30" height="50" /> Twivo Media
 
 [![Go](https://img.shields.io/badge/Go-1.26.5-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/)
 [![SeaweedFS](https://img.shields.io/badge/Storage-SeaweedFS-8B5CF6?style=flat-square)](https://seaweedfs.com/)
