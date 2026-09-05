@@ -5,22 +5,35 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/husseinayyed/twivo-media/internal/cache"
 	"github.com/husseinayyed/twivo-media/internal/database/redis"
-    "github.com/husseinayyed/twivo-media/internal/cache"
 )
 
-var imgproxyProxy = httputil.NewSingleHostReverseProxy(&url.URL{
-    Scheme: "http",
-    Host:   "imgproxy:8080",
-})
+var (
+    IMGPROXY_URL = os.Getenv("IMGPROXY_URL")
+    WEED_FILER_URL = os.Getenv("WEED_FILER_URL")
+   imgproxyProxy  *httputil.ReverseProxy
+)
 
 func init() {
+    if IMGPROXY_URL == "" {
+        panic("IMGPROXY_URL enviroment variable must be set")
+    }
+    u, err := url.ParseRequestURI(IMGPROXY_URL)
+	if err != nil {
+		panic("Failed to parse URL")
+	}
+    imgproxyProxy = httputil.NewSingleHostReverseProxy(&url.URL{
+    Scheme: u.Scheme,
+    Host: u.Host,
+})
     imgproxyProxy.Director = func(req *http.Request) {
-        req.URL.Scheme = "http"
-        req.URL.Host = "imgproxy:8080"
+        req.URL.Scheme = u.Scheme
+        req.URL.Host = u.Host
         req.Header.Del("Accept-Encoding")
     }
 }
@@ -28,8 +41,8 @@ func init() {
 func ServeImageDirect(c *gin.Context, imageID string, v *cache.ImageResponse) {
     targetID := v.BelongsTo
 
-    path := fmt.Sprintf("/unsafe/resize:fit:%d:%d/f:webp/plain/http://weed-filer:8888/buckets/twivo/%s%s",
-        v.Width, v.Height, targetID, v.FileType)
+    path := fmt.Sprintf("/unsafe/resize:fit:%d:%d/f:webp/plain/%s/buckets/twivo/%s%s",
+        v.Width, v.Height,WEED_FILER_URL, targetID, v.FileType)
     c.Request.URL.Path = path
     imgproxyProxy.ServeHTTP(c.Writer, c.Request)
 }

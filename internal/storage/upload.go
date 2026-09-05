@@ -22,7 +22,7 @@ func getDefaultWeedFilerURL() string {
 	if url := os.Getenv("WEED_FILER_URL"); url != "" {
 		return url
 	}
-	return "http://weed-filer:8888"
+	panic("WEED_FILER_URL enviroment variable must be set")
 }
 
 

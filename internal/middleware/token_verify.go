@@ -16,9 +16,9 @@ import (
 
 var (
 	
-	JWTIssuer       = "twivo"
-	JWTAudience     = "media"
-	PUBLIC_KEY_PATH = "keys/public.pem"
+	JWTIssuer       = os.Getenv("JWT_ISS")
+	JWTAudience     = os.Getenv("JWT_AUD")
+	PUBLIC_KEY_PATH = os.Getenv("PUBLIC_KEY_PATH")
 	ErrInvalidToken = errors.New("the provided token is invalid")
     tokenBlockDuration = 3 * time.Minute // 3 minutes in time.Duration nanoseconds
 
@@ -27,6 +27,9 @@ var (
 )
 
 func init() {
+	if JWTIssuer == "" || JWTAudience == "" || PUBLIC_KEY_PATH == "" {
+		panic("One or more required environment variables (JWT_ISS, JWT_AUD, PUBLIC_KEY_PATH) are empty")
+	}
 	// Read and parse your Ed25519 public key file
 	b, err := os.ReadFile(PUBLIC_KEY_PATH)
 	if err != nil {

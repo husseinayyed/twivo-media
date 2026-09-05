@@ -16,6 +16,7 @@ import (
 
 
 func main() {
+	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 	pprof.Register(router) // Register pprof routes for profiling and debugging
 	port := "8020"

@@ -3,17 +3,12 @@ services:
     image: nginx:alpine
     ports:
       - "80:80"
-    environment:
-      - REDIS_URL=${REDIS_URL}
-      - JWT_ISS=${JWT_ISS}
-      - JWT_AUD=${JWT_AUD}
     volumes:
     - ./nginx.conf:/etc/nginx/nginx.conf:ro
     - nginx-conf:/var/cache/nginx
-
     depends_on:
       - redis
-      - twivo-app
+      - twivo-media
     networks:
       - twivo-network
 
@@ -72,19 +67,15 @@ services:
     networks:
       - twivo-network
   
-  twivo-app:
+  twivo-media:
     build:
       context: .
       target: dev
-    container_name: twivo-app
     restart: unless-stopped
     volumes:
       - .:/app
-      - ./keys/public.pem:/app/keys/public.pem:ro
-    environment:
-      - REDIS_URL=${REDIS_URL}
-      - SSL_CERT_PATH=/app/keys/public.pem
-      - SEAWEEDFS_FILER_URL=${SEAWEEDFS_FILER_URL}
+    env_file:
+      - .env
     networks:
       - twivo-network
     depends_on:
@@ -111,7 +102,7 @@ services:
       IMGPROXY_TTL: "2592000"
       IMGPROXY_MAX_SRC_FILE_SIZE: "15728640"
       IMGPROXY_IGNORE_SIGNATURE_ERRORS: "true"
-      IMGPROXY_ALLOWED_SOURCES: "http://weed-filer:8888/"
+      IMGPROXY_ALLOWED_SOURCES: ${WEED_FILER_URL}
     networks:
       - twivo-network
 
