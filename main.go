@@ -2,9 +2,6 @@ package main
 
 import (
 	"fmt"
-	_ "image/jpeg"
-	_ "image/png"
-
 	pprof "github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"github.com/husseinayyed/twivo-media/internal/cache"
@@ -12,7 +9,6 @@ import (
 	"github.com/husseinayyed/twivo-media/internal/database/redis"
 	"github.com/husseinayyed/twivo-media/internal/handler"
 	"github.com/husseinayyed/twivo-media/internal/middleware"
-	_ "golang.org/x/image/webp"
 )
 
 

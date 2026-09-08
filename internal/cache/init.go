@@ -11,6 +11,8 @@ type ImageResponse struct {
 	Height    uint16
 	BelongsTo string
 	OwnerId   string
+	CheckSum string
+	Phash string
 	FileUUID  string
 	TweetId   string
 	FileType  string
