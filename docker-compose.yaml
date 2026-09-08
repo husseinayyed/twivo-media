@@ -11,7 +11,6 @@ services:
       - twivo-media
     networks:
       - twivo-network
-
   redis:
     image: redis:7-alpine
     container_name: twivo-media-redis
@@ -21,6 +20,7 @@ services:
       --appendonly no 
       --save "" 
       --tcp-keepalive 60
+      --requirepass ${REDIS_PASS}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
