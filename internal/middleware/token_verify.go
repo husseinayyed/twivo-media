@@ -6,11 +6,13 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"time"
+
 	"github.com/gin-gonic/gin"
-	"github.com/husseinayyed/twivo-media/internal/cache"
 	jwt "github.com/golang-jwt/jwt/v5"
+	"github.com/husseinayyed/twivo-media/internal/cache"
 	"github.com/husseinayyed/twivo-media/internal/database/redis"
 )
 
@@ -28,29 +30,29 @@ var (
 
 func init() {
 	if JWTIssuer == "" || JWTAudience == "" || PUBLIC_KEY_PATH == "" {
-		panic("One or more required environment variables (JWT_ISS, JWT_AUD, PUBLIC_KEY_PATH) are empty")
+		log.Fatalln("One or more required environment variables (JWT_ISS, JWT_AUD, PUBLIC_KEY_PATH) are empty")
 	}
 	// Read and parse your Ed25519 public key file
 	b, err := os.ReadFile(PUBLIC_KEY_PATH)
 	if err != nil {
-		panic("failed to read public_key.pem: " + err.Error())
+		log.Fatalf("failed to read public_key.pem: %v",err.Error())
 	}
 
 	block, _ := pem.Decode(b)
 	if block == nil {
-		panic("failed to decode valid PEM block from public key")
+		log.Fatalln("failed to decode valid PEM block from public key")
 	}
 
 	pubKeyRaw, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		panic("failed to parse PKIX public key: " + err.Error())
+		log.Fatalf("failed to parse PKIX public key: %v",err.Error())
 	}
 
 	// 3. Store the type-asserted key into your global variable
 	var ok bool
 	PublicSigningKey, ok = pubKeyRaw.(ed25519.PublicKey)
 	if !ok {
-		panic("key inside public_key.pem is not a valid Ed25519 public key")
+		log.Fatalln("key inside public_key.pem is not a valid Ed25519 public key")
 	}
 }
 func VerifyToken(c *gin.Context) {

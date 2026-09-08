@@ -1,6 +1,8 @@
 package cache
 
 import (
+	"log"
+
 	"github.com/hashicorp/golang-lru/v2"
 )
 
@@ -35,7 +37,7 @@ func InitCache() {
 	// 3. Automatically check if any one of them failed
 	for _, err := range errs {
 		if err != nil {
-			panic("Error creating LRU cache: " + err.Error())
+			log.Fatalf("Error creating LRU cache: %v", err.Error())
 		}
 	}
 	LruCacheCheckSum = lru1

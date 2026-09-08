@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -17,8 +18,7 @@ func ConnectRedis() (redisClient *redis.Client, err error) {
 	redisHost := os.Getenv("REDIS_URL")
 
 	if redisHost == "" {
-		fmt.Println("REDIS_URL environment variable must be set")
-		os.Exit(1)
+		log.Fatalln("REDIS_URL environment variable must be set")
 	}
 
 	RedisClient = redis.NewClient(&redis.Options{

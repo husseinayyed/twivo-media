@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"time"
-	"net"
+
 	"github.com/rs/dnscache"
 )
 
@@ -22,7 +24,7 @@ func getDefaultWeedFilerURL() string {
 	if url := os.Getenv("WEED_FILER_URL"); url != "" {
 		return url
 	}
-	panic("WEED_FILER_URL enviroment variable must be set")
+	log.Fatalln("WEED_FILER_URL enviroment variable must be set")
 }
 
 

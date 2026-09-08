@@ -2,6 +2,7 @@ package handler
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -21,11 +22,11 @@ var (
 
 func init() {
     if IMGPROXY_URL == "" {
-        panic("IMGPROXY_URL enviroment variable must be set")
+        log.Fatalln("IMGPROXY_URL enviroment variable must be set")
     }
     u, err := url.ParseRequestURI(IMGPROXY_URL)
 	if err != nil {
-		panic("Failed to parse URL")
+		log.Fatalln("Failed to parse URL")
 	}
     imgproxyProxy = httputil.NewSingleHostReverseProxy(&url.URL{
     Scheme: u.Scheme,
