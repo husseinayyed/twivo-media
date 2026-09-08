@@ -21,10 +21,12 @@ var (
 )
 
 func getDefaultWeedFilerURL() string {
-	if url := os.Getenv("WEED_FILER_URL"); url != "" {
-		return url
-	}
-	log.Fatalln("WEED_FILER_URL enviroment variable must be set")
+    url := os.Getenv("WEED_FILER_URL")
+    if url == "" {
+        log.Fatal("WEED_FILER_URL environment variable must be set")
+    }
+
+    return url
 }
 
 

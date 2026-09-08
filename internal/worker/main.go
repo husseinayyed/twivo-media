@@ -11,29 +11,37 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
+	"github.com/husseinayyed/twivo-media/internal/cache"
 	"github.com/husseinayyed/twivo-media/internal/database/redis"
 	"github.com/husseinayyed/twivo-media/internal/tasks"
-	"github.com/husseinayyed/twivo-media/internal/cache"
 	goredis "github.com/redis/go-redis/v9"
 )
 type Worker struct {
 	Client *asynq.Client
 }
 
-
 func NewWorker() (*Worker, error) {
-	redisClient, err := redis.ConnectRedis()
+	
+	asynqOpt, err := asynq.ParseRedisURI(redis.REDIS_URL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to Redis: %v", err)
+		return nil, fmt.Errorf("failed to parse Redis URL for Asynq: %v", err)
 	}
 
-	client := asynq.NewClientFromRedisClient(redisClient)
+	// 3. Instantiate the authenticated Asynq Client
+	client := asynq.NewClient(asynqOpt)
+	
 	return &Worker{Client: client}, nil
 }
 
+
 func (w *Worker) Start() {
+	redisServerOpt, err := asynq.ParseRedisURI(redis.REDIS_URL)
+	if err != nil {
+		log.Fatalf("failed to parse Redis URL for Asynq Server: %v", err)
+	}
+
 	srv := asynq.NewServer(
-		asynq.RedisClientOpt{Addr: redis.RedisClient.Options().Addr},
+		redisServerOpt, // Pass the fully authenticated choices object here
 		asynq.Config{
 			Concurrency: 20,
 			Queues: map[string]int{

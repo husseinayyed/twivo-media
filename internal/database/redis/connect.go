@@ -12,29 +12,38 @@ import (
 
 var (
 	RedisClient *redis.Client
+	REDIS_URL = os.Getenv("REDIS_URL")
 )
 
-func ConnectRedis() (redisClient *redis.Client, err error) {
-	redisHost := os.Getenv("REDIS_URL")
+func ConnectRedis() (*redis.Client, error) {
+	redisHost := REDIS_URL
 
 	if redisHost == "" {
 		log.Fatalln("REDIS_URL environment variable must be set")
 	}
 
-	RedisClient = redis.NewClient(&redis.Options{
-    Addr:            redisHost,        // Redis server address
-    PoolSize:        20,               // Maximum open connections
-    MinIdleConns:    5,                // Minimum idle connections to maintain
-    MaxIdleConns:    10,               // Maximum idle connections to keep
-    ConnMaxIdleTime: 5 * time.Minute,  // Close idle connections after 5 minutes
-})
+	opt, err := redis.ParseURL(redisHost)
+	if err != nil {
+		log.Fatalf("Failed to parse Redis URL configuration: %v\n", err)
+	}
 
-	ctx := context.Background()
+	opt.PoolSize = 20
+	opt.MinIdleConns = 5
+	opt.MaxIdleConns = 10
+	opt.ConnMaxIdleTime = 5 * time.Minute
+
+	// 3. 🌟 Pass the complete, modified configuration to the initialization driver
+	RedisClient = redis.NewClient(opt)
+
+	// 4. Use a dedicated short-lived context
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	if err := RedisClient.Ping(ctx).Err(); err != nil {
 		fmt.Println("Error connecting to Redis:", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("Connected to Redis successfully")
+	fmt.Println("🚀 Connected to Redis successfully!")
 	return RedisClient, nil
 }
