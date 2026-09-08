@@ -8,6 +8,7 @@ import (
 	pprof "github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"github.com/husseinayyed/twivo-media/internal/cache"
+	"github.com/husseinayyed/twivo-media/internal/database/mongodb"
 	"github.com/husseinayyed/twivo-media/internal/database/redis"
 	"github.com/husseinayyed/twivo-media/internal/handler"
 	"github.com/husseinayyed/twivo-media/internal/middleware"
@@ -22,6 +23,7 @@ func main() {
 	pprof.Register(router) // Register pprof routes for profiling and debugging
 	port := "8020"
 	cache.InitCache() // Initialize the LRU cache for storing image checksums
+	mongodb.InitMongo()
 	redis.ConnectRedis()
 	handler.InitWorker() // Initialize the worker for handling background tasks
 	

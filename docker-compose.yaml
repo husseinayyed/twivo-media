@@ -11,6 +11,18 @@ services:
       - twivo-media
     networks:
       - twivo-network
+  mongodb:
+    image: mongo:latest
+    expose:
+      - "27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGODB_USER}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGODB_PASSWORD}
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+    networks:
+      - twivo-network
   redis:
     image: redis:7-alpine
     container_name: twivo-media-redis
@@ -110,6 +122,7 @@ volumes:
   seaweed-master-data:
   seaweed-volume-data:
   seaweed-filer-data:
+  mongo_data:
   nginx-conf:
 
 networks:
