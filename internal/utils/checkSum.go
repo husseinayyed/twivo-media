@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/husseinayyed/twivo-media/internal/cache"
+	"github.com/husseinayyed/twivo-media/internal/database/mongodb"
 	"github.com/husseinayyed/twivo-media/internal/database/redis"
 	goRedis "github.com/redis/go-redis/v9"
 )
@@ -41,9 +42,7 @@ func CheckFileIfRepeated(c *gin.Context, ctx context.Context, checksumHex string
         local fields = redis.call('HMGET', key, 'nanoId', 'userId')
         return {1, fields[1] or '', fields[2] or ''}
     else
-        redis.call('HSET', key, 'nanoId', nanoId, 'userId', userId)
-        redis.call('EXPIRE', key, 86400)
-        return {0, nanoId, userId}
+        return {0, "", ""}
     end
 `)
 
@@ -61,20 +60,26 @@ func CheckFileIfRepeated(c *gin.Context, ctx context.Context, checksumHex string
 	}
 
 	isExisting := arr[0].(int64) == 1
-	existingNanoId := arr[1].(string)
-	existingUserId := arr[2].(string)
+	var existingNanoId string
+	var existingUserId string
 
+	
+	if isExisting {
+		img,exists := mongodb.GetCheckSum(checksumHex)
+
+		if exists && img != nil {
+			existingNanoId = img.NanoId
+			existingUserId = img.OwnerId
+		}
+		// File exists: return the existing data
+		return existingNanoId, existingUserId, true, existingUserId == userId, nil
+	}
 	// 5. Update LRU cache for faster future lookups
 	cache.LruCacheCheckSum.Add(key, &cache.CheckSumResponse{
 		NanoId: existingNanoId,
 		UserId: existingUserId,
 	})
 
-	// 6. Return results
-	if isExisting {
-		// File exists: return the existing data
-		return existingNanoId, existingUserId, true, existingUserId == userId, nil
-	}
 
 	// New file: the fileUUID is the new nanoId
 	return fileUUID, userId, false, false, nil

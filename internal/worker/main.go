@@ -12,9 +12,12 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/husseinayyed/twivo-media/internal/cache"
+	"github.com/husseinayyed/twivo-media/internal/database/mongodb"
+	"github.com/husseinayyed/twivo-media/internal/database/mongodb/schema"
 	"github.com/husseinayyed/twivo-media/internal/database/redis"
 	"github.com/husseinayyed/twivo-media/internal/tasks"
 	goredis "github.com/redis/go-redis/v9"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 type Worker struct {
 	Client *asynq.Client
@@ -87,7 +90,7 @@ func (w *Worker) Start() {
 
 func (w *Worker) handleUploadFileTask(ctx context.Context, t *asynq.Task) error {
     var payload tasks.UploadPayload
-	fmt.Println(payload)
+    fmt.Println(payload)
     if err := payload.Deserialize(t.Payload()); err != nil {
         return fmt.Errorf("failed to deserialize payload: %v", err)
     }
@@ -96,13 +99,13 @@ func (w *Worker) handleUploadFileTask(ctx context.Context, t *asynq.Task) error 
     
     // Prepare the event payload
     eventData := map[string]any{
-        "user_id":   payload.UserID,
-        "tweet_id":  payload.TweetID,
-        "file_uuid": payload.FileUUID,
-		"belongs_to": payload.BelongsTo,
-        "file_type": payload.FileType,
-        "width":     payload.Width,
-        "height":    payload.Height,
+        "user_id":    payload.UserID,
+        "tweet_id":   payload.TweetID,
+        "file_uuid":  payload.FileUUID,
+        "belongs_to": payload.BelongsTo,
+        "file_type":  payload.FileType,
+        "width":      payload.Width,
+        "height":     payload.Height,
     }
 
     // Use pipeline for atomic operations
@@ -126,23 +129,47 @@ func (w *Worker) handleUploadFileTask(ctx context.Context, t *asynq.Task) error 
     if err != nil {
         return fmt.Errorf("failed to execute pipeline: %v", err)
     }
-	width, err1 := strconv.ParseUint(payload.Width, 10, 16)
-	height, err2 := strconv.ParseUint(payload.Height, 10, 16)
-	if err1 != nil {
-		return fmt.Errorf("invalid image width %q: %v", payload.Width, err1)
-	}
-	if err2 != nil {
-		return fmt.Errorf("invalid image height %q: %v", payload.Height, err2)
-	}
+    
+    width, err1 := strconv.ParseUint(payload.Width, 10, 16)
+    height, err2 := strconv.ParseUint(payload.Height, 10, 16)
+    if err1 != nil {
+        return fmt.Errorf("invalid image width %q: %v", payload.Width, err1)
+    }
+    if err2 != nil {
+        return fmt.Errorf("invalid image height %q: %v", payload.Height, err2)
+    }
 
-	cache.LruCacheNanoId.Add(payload.FileUUID, &cache.ImageResponse{
-		Width:  uint16(width),
-		Height: uint16(height),
-		FileUUID: payload.FileUUID,
-		BelongsTo: payload.BelongsTo,
-		OwnerId: payload.UserID,
+    cache.LruCacheNanoId.Add(payload.FileUUID, &cache.ImageResponse{
+        Width:     uint16(width),
+        Height:    uint16(height),
+        FileUUID:  payload.FileUUID,
+        BelongsTo: payload.BelongsTo,
+        OwnerId:   payload.UserID,
+        TweetId:   payload.TweetID,
+        FileType:  payload.FileType,
+    })
+
+    img, inserted := mongodb.InsertImage(&schema.Image{
+        ID:        primitive.NewObjectID(),
+        NanoId:    payload.FileUUID,
+        BelongsTo: payload.BelongsTo,
 		TweetId: payload.TweetID,
-		FileType: payload.FileType,
-	})
-	return nil
+        OwnerId:   payload.UserID,
+        FileType:  payload.FileType,
+        Width:     int(width),
+        Height:    int(height),
+        CheckSum:  payload.CheckSum, // Placeholder: Provide actual checksum if available in payload
+        Phash:     "nil", // Placeholder: Provide actual phash if available in payload
+        CreatedAt: time.Now(),
+        UpdatedAt: time.Now(),
+    })
+
+    // 3. Optional: Recommended handling if the insert fails (e.g., due to duplicate index conflict)
+    if !inserted {
+        return fmt.Errorf("failed to insert image metadata into mongodb or image duplicate exists")
+    }
+
+    _ = img // Kept reference to prevent unused variable error if you plan to log it
+    
+    return nil
 }
