@@ -19,7 +19,7 @@ Twivo Media is a Go image service for Twivo. It validates and streams image uplo
 | Uploads | JPEG, PNG, and WebP; streamed to SeaweedFS |
 | Validation | `100x100` to `2048x2048`, with a 20 MiB edge limit |
 | Authentication | Ed25519 JWT with issuer, audience, and one-time JTI checks |
-| Metadata | Redis hash records created by an embedded Asynq worker |
+| Metadata | Redis hash records and MongoDB image documents created by an embedded Asynq worker |
 | Delivery | imgproxy transforms originals into WebP |
 | Caching | Nginx response cache, process-local LRU, then Redis |
 
@@ -39,13 +39,16 @@ Gin API :8020
   +--> Redis :6379 <------ Asynq worker
   |      metadata and cache
   |
+  +--> MongoDB :27017 <--- Asynq worker
+  |      durable image metadata
+  |
   +--> imgproxy :8080 ----> SeaweedFS Filer
        resize and WebP output
 ```
 
 Nginx is only the public reverse proxy, cache, rate limiter, and user-agent filter. JWT validation is performed by the Go API.
 
-Nginx caches successful image responses for `10m` and image `404` responses for `1m`. The shorter negative-cache window limits stale misses while the asynchronous worker is still writing metadata.
+Nginx caches successful image responses and image `404` responses for `10m`. A cached `404` can remain until that negative-cache window expires if the asynchronous worker has not finished writing metadata.
 
 ## Features
 
@@ -56,6 +59,7 @@ Nginx caches successful image responses for `10m` and image `404` responses for 
 - Ed25519 JWT verification with issuer, audience, and JTI replay protection.
 - Redis-backed Asynq upload tasks.
 - SeaweedFS storage with imgproxy WebP delivery.
+- MongoDB persistence for image metadata with startup index creation.
 - LRU and Redis metadata lookup layers.
 - Nginx response caching, upload/image rate limits, and Nmap blocking.
 
@@ -102,8 +106,9 @@ The image route checks metadata in this order:
 
 1. **LRU cache:** fastest, process-local metadata lookup.
 2. **Redis:** shared `nano:<id>` metadata fallback.
-3. **MongoDB:** planned persistent fallback; not implemented in the current repository.
-4. **SeaweedFS through imgproxy:** reads the original object and returns resized WebP bytes.
+3. **SeaweedFS through imgproxy:** reads the original object and returns resized WebP bytes.
+
+MongoDB stores durable image metadata and is written by the upload worker. MongoDB fallback reads are not yet part of the image route.
 
 ![Image retrieval](docs/screenshots/04-image-cache-flow.png)
 
@@ -114,7 +119,7 @@ GET /i/:id
     |
     +-> LRU miss -> Redis hit ----------------> imgproxy -> SeaweedFS
     |
-    +-> Redis miss -> MongoDB (planned) ------> imgproxy -> SeaweedFS
+    +-> Redis miss ----------------------------> 404
     |
     +-> no metadata --------------------------> 404
 ```
@@ -139,6 +144,9 @@ Create `.env` in the project root:
 
 ```dotenv
 REDIS_URL=redis:6379
+MONGODB_URL=mongodb://mongodb:27017
+MONGODB_USER=twivo
+MONGODB_PASSWORD=<password>
 IMGPROXY_URL=http://imgproxy:8080
 WEED_FILER_URL=http://weed-filer:8888
 JWT_ISS=twivo
@@ -149,6 +157,9 @@ PUBLIC_KEY_PATH=/app/keys/public.pem
 | Variable | Required | Description |
 | --- | --- | --- |
 | `REDIS_URL` | Yes | Redis and Asynq address |
+| `MONGODB_URL` | Yes | MongoDB address |
+| `MONGODB_USER` | Yes | MongoDB username |
+| `MONGODB_PASSWORD` | Yes | MongoDB password |
 | `IMGPROXY_URL` | Yes | imgproxy base URL |
 | `WEED_FILER_URL` | Yes | SeaweedFS Filer URL |
 | `JWT_ISS` | Yes | Expected JWT issuer |
@@ -156,6 +167,8 @@ PUBLIC_KEY_PATH=/app/keys/public.pem
 | `PUBLIC_KEY_PATH` | Yes | Ed25519 public-key PEM path |
 
 The API reads the JWT issuer, audience, and Ed25519 public-key path from these environment variables and fails during startup if they are empty.
+
+MongoDB image metadata is stored in the `twivo.images` collection. Startup creates indexes for `nano_id`, `check_sum`, and `phash`.
 
 ### Generate Ed25519 Keys
 
@@ -281,7 +294,7 @@ docker compose exec twivo-media wget -qO- http://127.0.0.1:8020/ping
 
 ## Troubleshooting
 
-If an upload returns successfully but `GET /i/:id` returns `404`, check that the API log contains `Starting processing` and `Scheduled upload task`. The worker must be running and connected to the same Redis instance. Nginx caches image `404` responses for only 10 minutes, so wait for the worker and retry after the negative-cache window expires.
+If an upload returns successfully but `GET /i/:id` returns `404`, check that the API log contains `Scheduled upload task` and that the worker is connected to the same Redis instance. The worker writes Redis metadata asynchronously, so a request can miss before processing completes. Nginx caches image `404` responses for up to 10 minutes; purge the Nginx cache or retry after that window expires.
 
 ## License
 
