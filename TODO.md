@@ -15,12 +15,12 @@
 
 ## MongoDB
 
-- [ ] Add MongoDB to `docker-compose.yaml`.
-- [ ] Store file URLs, owners, tweet IDs, MIME types, sizes, dimensions, and SeaweedFS paths.
-- [ ] Store creation, update, and deletion timestamps.
+- [x] Add MongoDB to `docker-compose.yaml`.
+- [x] Store file URLs, owners, tweet IDs, MIME types, sizes, dimensions, and SeaweedFS paths.
+- [x] Store creation and update timestamps.
 - [ ] Add indexes for file ID, owner ID, tweet ID, SHA-256, and pHash.
 - [ ] Add MongoDB health checks and graceful startup handling.
-      (Not started – no MongoDB changes in this diff.)
+      (MongoDB connection and index initialization exist; health checks and graceful startup handling remain.)
 
 ## File Hashing
 
@@ -64,8 +64,8 @@
       (Only Nginx adds X‑Cache‑Status; internal LRU hit/miss not tracked.)
 - [x] Configure Nginx to cache successful image responses.
       (Done – proxy_cache and proxy_cache_valid are set.)
-- [x] Configure Nginx to cache image 404 responses for one minute.
-      (Done – proxy_cache_valid 404 1m.)
+- [x] Configure Nginx to cache image 404 responses.
+      (Done – proxy_cache_valid 404 10m.)
 
 ## Cuckoo Filter
 
