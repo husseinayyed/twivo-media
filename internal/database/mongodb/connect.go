@@ -2,6 +2,7 @@ package mongodb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -100,6 +101,27 @@ func GetCheckSum(checksum string) (*schema.Image, bool) {
 	}
 
 	return &img, true
+}
+func GetImage(nano string) (*schema.Image, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var img schema.Image
+	err := Client.Database(databaseName).
+		Collection(imageCollection).
+		FindOne(ctx, bson.M{"nanoid": nano}).
+		Decode(&img) // <-- Decode is required to fetch the data and errors
+
+	// 3. Handle errors properly
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			// Handle case where NO document matches the nano ID
+			log.Println("No image found with that nano ID")
+			return nil, mongo.ErrNoDocuments
+		}
+		// Handle genuine connection or system errors
+		log.Fatalf("Database query failed: %v", err)
+	} 
+	return &img, nil
 }
 func InsertImage(img *schema.Image) (*schema.Image, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
