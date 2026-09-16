@@ -146,7 +146,8 @@ GET /i/:id
 Create `.env` in the project root:
 
 ```dotenv
-REDIS_URL=redis:6379
+REDIS_PASS=<redis-password>
+REDIS_URL=redis://:<redis-password>@redis:6379/0
 MONGODB_URL=mongodb://mongodb:27017
 MONGODB_USER=twivo
 MONGODB_PASSWORD=<password>
@@ -159,7 +160,8 @@ PUBLIC_KEY_PATH=/app/keys/public.pem
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `REDIS_URL` | Yes | Redis and Asynq address |
+| `REDIS_PASS` | Yes | Redis container password, matching the `requirepass` setting |
+| `REDIS_URL` | Yes | Redis URL used by Go, including the password in `redis://:password@host:port/0` format |
 | `MONGODB_URL` | Yes | MongoDB address |
 | `MONGODB_USER` | Yes | MongoDB username |
 | `MONGODB_PASSWORD` | Yes | MongoDB password |
@@ -168,6 +170,7 @@ PUBLIC_KEY_PATH=/app/keys/public.pem
 | `JWT_ISS` | Yes | Expected JWT issuer |
 | `JWT_AUD` | Yes | Expected JWT audience |
 | `PUBLIC_KEY_PATH` | Yes | Ed25519 public-key PEM path |
+| `GIN_MODE` | No | Gin runtime mode, typically `debug`, `release`, or `test` |
 
 The API reads the JWT issuer, audience, and Ed25519 public-key path from these environment variables and fails during startup if they are empty.
 

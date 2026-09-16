@@ -4,6 +4,7 @@ import (
 	"fmt"
 	_ "image/jpeg"
 	_ "image/png"
+	"os"
 
 	pprof "github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
@@ -15,10 +16,13 @@ import (
 	_ "golang.org/x/image/webp"
 )
 
-
-
 func main() {
-	gin.SetMode(gin.ReleaseMode)
+	if mode := os.Getenv("GIN_MODE"); mode != "" {
+		gin.SetMode(mode)
+	} else {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
 	router := gin.Default()
 	pprof.Register(router) // Register pprof routes for profiling and debugging
 	port := "8020"
