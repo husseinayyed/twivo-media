@@ -18,9 +18,10 @@
 - [x] Add MongoDB to `docker-compose.yaml`.
 - [x] Store file URLs, owners, tweet IDs, MIME types, sizes, dimensions, and SeaweedFS paths.
 - [x] Store creation and update timestamps.
-- [ ] Add indexes for file ID, owner ID, tweet ID, SHA-256, and pHash.
-- [ ] Add MongoDB health checks and graceful startup handling.
-      (MongoDB connection and index initialization exist; health checks and graceful startup handling remain.)
+- [x] Add indexes for file ID, owner ID, tweet ID, SHA-256, and pHash.
+      (Startup creates `nano_id`, `check_sum`, and `phash` indexes.)
+- [x] Add MongoDB health checks and graceful startup handling.
+      (MongoDB connection and startup index creation now verify the client with a ping and fail fast on setup errors.)
 
 ## File Hashing
 
@@ -58,8 +59,8 @@
       (Already existed with size 100,000; now extended with BelongsTo, OwnerId, etc.)
 - [ ] Add TTL support and cache invalidation.
       (Not added – LRU is size‑bounded with no TTL.)
-- [ ] Use Redis and MongoDB as fallbacks after LRU cache misses.
-      (Redis is implemented; MongoDB is pending.)
+- [x] Use Redis and MongoDB as fallbacks after LRU cache misses.
+      (Redis is implemented and MongoDB fallback is included in the image route.)
 - [ ] Track cache hits, misses, and evictions.
       (Only Nginx adds X‑Cache‑Status; internal LRU hit/miss not tracked.)
 - [x] Configure Nginx to cache successful image responses.

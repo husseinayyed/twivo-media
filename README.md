@@ -106,9 +106,10 @@ The image route checks metadata in this order:
 
 1. **LRU cache:** fastest, process-local metadata lookup.
 2. **Redis:** shared `nano:<id>` metadata fallback.
-3. **SeaweedFS through imgproxy:** reads the original object and returns resized WebP bytes.
+3. **MongoDB:** durable metadata lookup when Redis does not have the record.
+4. **SeaweedFS through imgproxy:** reads the original object and returns resized WebP bytes.
 
-MongoDB stores durable image metadata and is written by the upload worker. MongoDB fallback reads are not yet part of the image route.
+MongoDB stores durable image metadata and is written by the upload worker. Successful MongoDB lookups hydrate the LRU and Redis caches so the next request can serve the image without another database round trip.
 
 ![Image retrieval](docs/screenshots/04-image-cache-flow.png)
 
@@ -119,10 +120,12 @@ GET /i/:id
     |
     +-> LRU miss -> Redis hit ----------------> imgproxy -> SeaweedFS
     |
-    +-> Redis miss ----------------------------> 404
+    +-> Redis miss -> MongoDB hit ------------> cache + imgproxy -> SeaweedFS
     |
     +-> no metadata --------------------------> 404
 ```
+
+> The image route now performs a `nano_id` lookup against MongoDB and exits immediately on `ErrNoDocuments` to avoid nil dereferences and incorrect 404 fallthroughs.
 
 ## Technology Stack
 
