@@ -18,7 +18,7 @@ EXPOSE 8020
 CMD ["tail", "-f", "/dev/null"]
 
 # --- Runtime / Production Stage ---
-FROM alpine:3.21
+FROM alpine:3.21 As prod
 RUN apk --no-cache add ca-certificates
 WORKDIR /app
 COPY --from=builder /app/main .

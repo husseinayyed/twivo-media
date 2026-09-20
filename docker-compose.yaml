@@ -82,10 +82,10 @@ services:
   twivo-media:
     build:
       context: .
-      target: dev
+      target: ${APP_STAGE}
     restart: unless-stopped
     volumes:
-      - .:/app
+      - ./keys:/app/keys:ro
     env_file:
       - .env
     networks:
