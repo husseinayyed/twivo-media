@@ -92,8 +92,8 @@
 ## Documentation
 
 - [x] Update `README.md` after the OpenResty removal.
-- [ ] Document MongoDB environment variables.
-- [ ] Document upload, retrieval, and deletion APIs.
-- [ ] Document cache invalidation behavior.
+- [x] Document MongoDB environment variables.
+- [x] Document upload and retrieval APIs.
+- [x] Document cache behavior, including the ten-minute negative image cache.
+- [ ] Document deletion APIs once file deletion is implemented.
 - [ ] Add deployment and backup instructions.
-      (No doc updates in the diff.)

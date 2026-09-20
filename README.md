@@ -46,6 +46,8 @@ Gin API :8020
        resize and WebP output
 ```
 
+    Uploads are streamed from the API to the SeaweedFS Filer. Image retrieval first resolves metadata through the cache and database layers, then the API reverse-proxies the request to imgproxy, which reads the original from SeaweedFS and returns WebP output.
+
 Nginx is only the public reverse proxy, cache, rate limiter, and user-agent filter. JWT validation is performed by the Go API.
 
 Nginx caches successful image responses and image `404` responses for `10m`. A cached `404` can remain until that negative-cache window expires if the asynchronous worker has not finished writing metadata.
@@ -146,6 +148,7 @@ GET /i/:id
 Create `.env` in the project root:
 
 ```dotenv
+APP_STAGE=dev
 REDIS_PASS=<redis-password>
 REDIS_URL=redis://:<redis-password>@redis:6379/0
 MONGODB_URL=mongodb://mongodb:27017
@@ -160,6 +163,7 @@ PUBLIC_KEY_PATH=/app/keys/public.pem
 
 | Variable | Required | Description |
 | --- | --- | --- |
+| `APP_STAGE` | Yes | Docker build stage; use `dev` for the local development image |
 | `REDIS_PASS` | Yes | Redis container password, matching the `requirepass` setting |
 | `REDIS_URL` | Yes | Redis URL used by Go, including the password in `redis://:password@host:port/0` format |
 | `MONGODB_URL` | Yes | MongoDB address |
@@ -193,26 +197,32 @@ The script checks that OpenSSL is installed, asks for confirmation before overwr
 
 ## Run Locally
 
-Start the Compose infrastructure:
+Start the development containers with the development Compose file:
 
 ```bash
-docker compose up -d --build
+make dev
 ```
 
-The development image uses an idle command. Start the API and embedded Asynq worker in the `twivo-media` container:
+The development image stays idle so it does not start the API automatically. Open a shell in the media container:
 
 ```bash
-docker compose exec twivo-media go run .
+make dev-shell
+```
+
+Start the API and embedded Asynq worker from that shell:
+
+```bash
+go run .
 ```
 
 The public service is available at `http://localhost`.
 
 ```bash
-# Stop services
-docker compose down
+# Stop development services
+make dev-down
 
-# Stop services and remove SeaweedFS volumes
-docker compose down -v
+# Stop services and remove development volumes
+make dev-clean
 
 # Run tests
 go test ./...

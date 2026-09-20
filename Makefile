@@ -1,4 +1,4 @@
-.PHONY: dev dev-shell dev-down
+.PHONY: dev dev-shell dev-down dev-clean
 
 COMPOSE := sudo docker compose -f docker-compose.yaml -f docker-compose.dev.yaml
 
@@ -10,3 +10,6 @@ dev-shell:
 
 dev-down:
 	$(COMPOSE) down
+
+dev-clean:
+	$(COMPOSE) down -v
