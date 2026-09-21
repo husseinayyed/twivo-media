@@ -1,6 +1,13 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   nginx:
     image: nginx:alpine
+    logging: *default-logging
     ports:
       - "80:80"
     volumes:
@@ -13,6 +20,7 @@ services:
       - twivo-network
   mongodb:
     image: mongo:latest
+    logging: *default-logging
     expose:
       - "27017"
     environment:
@@ -25,6 +33,7 @@ services:
       - twivo-network
   redis:
     image: redis:7-alpine
+    logging: *default-logging
     container_name: twivo-media-redis
     restart: unless-stopped
     command: >
@@ -43,6 +52,7 @@ services:
 
   weed-master:
     image: chrislusf/seaweedfs:latest
+    logging: *default-logging
     restart: unless-stopped
     command: master -ip=weed-master
     expose:
@@ -54,6 +64,7 @@ services:
 
   weed-volume:
     image: chrislusf/seaweedfs:latest
+    logging: *default-logging
     restart: unless-stopped
     command: volume -mserver=weed-master:9333 -port=8085 -max=100 -dir=/data
     expose:
@@ -67,6 +78,7 @@ services:
 
   weed-filer:
     image: chrislusf/seaweedfs:latest
+    logging: *default-logging
     restart: unless-stopped
     command: filer -master=weed-master:9333
     expose:
@@ -83,6 +95,7 @@ services:
     build:
       context: .
       target: ${APP_STAGE}
+    logging: *default-logging
     restart: unless-stopped
     volumes:
       - ./keys:/app/keys:ro
@@ -104,6 +117,7 @@ services:
 
   imgproxy:
     image: ghcr.io/imgproxy/imgproxy:latest
+    logging: *default-logging
     container_name: imgproxy
     restart: always
     expose:
