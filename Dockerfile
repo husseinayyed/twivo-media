@@ -13,6 +13,8 @@ RUN apk --no-cache add git bash curl
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+RUN adduser -D -u 1001 appuser && chown -R appuser:appuser /app
+USER appuser
 EXPOSE 8020
 
 CMD ["tail", "-f", "/dev/null"]
