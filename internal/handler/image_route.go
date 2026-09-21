@@ -25,6 +25,8 @@ var (
 	imgproxyProxy  *httputil.ReverseProxy
 )
 
+const internalServerErrorMessage = "Internal server error"
+
 func init() {
 	if IMGPROXY_URL == "" {
 		log.Fatalln("IMGPROXY_URL enviroment variable must be set")
@@ -72,14 +74,14 @@ func ImageRoute(c *gin.Context) {
 	redisKey := fmt.Sprintf("nano:%v", imageID)
 	exists, err := redis.RedisClient.Exists(c, redisKey).Result()
 	if err != nil {
-		c.JSON(500, gin.H{"error": "Internal server error"})
+		c.JSON(500, gin.H{"error": internalServerErrorMessage})
 		return
 	}
 
 	if exists > 0 {
 		hashData, err := redis.RedisClient.HGetAll(c, redisKey).Result()
 		if err != nil {
-			c.JSON(500, gin.H{"error": "Internal server error"})
+			c.JSON(500, gin.H{"error": internalServerErrorMessage})
 			return
 		}
 
@@ -105,7 +107,7 @@ func ImageRoute(c *gin.Context) {
 				c.JSON(404, gin.H{"error": "Image not found"})
 				return
 			}
-			c.JSON(500, gin.H{"error": "Internal server error"})
+			c.JSON(500, gin.H{"error": internalServerErrorMessage})
 			return
 		}
 
@@ -142,7 +144,7 @@ func ImageRoute(c *gin.Context) {
 		// Execute pipeline
 		_, err = pipe.Exec(ctx)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "Internal server error"})
+			c.JSON(500, gin.H{"error": internalServerErrorMessage})
 			return
 		}
         ServeImageDirect(c,imageID,data)
