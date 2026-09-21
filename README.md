@@ -228,6 +228,26 @@ make dev-clean
 go test ./...
 ```
 
+### View Logs
+
+Docker Compose keeps container logs with bounded rotation: each container keeps up to five `10 MiB` JSON log files. Follow logs from the repository root:
+
+```bash
+# Follow logs from every service
+make logs
+
+# Follow only Nginx or the Go app logs
+make logs-nginx
+make logs-app
+
+# Save a timestamped snapshot under logs/
+make logs-save
+make logs-save-nginx
+make logs-save-app
+```
+
+Nginx writes structured access logs to the container output, including the method, path, status, client IP, upstream status, request duration, and `request_id`. The Go API and worker use structured zerolog output. The same `X-Request-ID` is forwarded to the API and returned in responses, making it possible to correlate a client request across Nginx and the application logs.
+
 ## API
 
 ### `POST /upload`

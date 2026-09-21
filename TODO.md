@@ -23,6 +23,14 @@
 - [x] Add MongoDB health checks and graceful startup handling.
       (MongoDB connection and startup index creation now verify the client with a ping and fail fast on setup errors.)
 
+## Observability
+
+- [x] Replace application and worker logging with structured zerolog events.
+- [x] Add request start and completion logs with request ID, client IP, status, and duration.
+- [x] Forward and return `X-Request-ID` through Nginx for request correlation.
+- [x] Add structured Nginx access/error logs and bounded Docker log rotation.
+- [x] Add Make targets for following and saving global, Nginx, and application logs.
+
 ## File Hashing
 
 - [x] Calculate SHA-256 while streaming uploads.
