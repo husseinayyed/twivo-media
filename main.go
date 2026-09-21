@@ -13,24 +13,31 @@ import (
 	"github.com/husseinayyed/twivo-media/internal/database/redis"
 	"github.com/husseinayyed/twivo-media/internal/handler"
 	"github.com/husseinayyed/twivo-media/internal/middleware"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	_ "golang.org/x/image/webp"
 )
 
 func main() {
-	if mode := os.Getenv("GIN_MODE"); mode != "" {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	log.Logger = log.With().Str("service", "twivo-media").Logger()
+	mode := os.Getenv("GIN_MODE")
+	if mode != "" {
 		gin.SetMode(mode)
 	} else {
 		gin.SetMode(gin.ReleaseMode)
 	}
+	log.Info().Msgf("Server started with %v", mode)
 
-	router := gin.Default()
+	router := gin.New()
+	router.Use(gin.Recovery(), middleware.RequestLogger())
 	pprof.Register(router) // Register pprof routes for profiling and debugging
 	port := "8020"
 	cache.InitCache() // Initialize the LRU cache for storing image checksums
 	mongodb.InitMongo()
 	redis.ConnectRedis()
 	handler.InitWorker() // Initialize the worker for handling background tasks
-	
+
 	router.GET("/ping", func(c *gin.Context) {
 		c.JSON(200, gin.H{"ping": "pong"})
 	})
