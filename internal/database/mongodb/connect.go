@@ -3,12 +3,11 @@ package mongodb
 import (
 	"context"
 	"errors"
-	"fmt"
-	"log"
 	"os"
 	"time"
 
 	"github.com/husseinayyed/twivo-media/internal/database/mongodb/schema"
+	"github.com/rs/zerolog/log"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -29,7 +28,7 @@ var (
 
 func InitMongo() {
 	if MONGODB_URL == "" || MONGODB_USER == "" || MONGODB_PASSWORD == "" {
-		log.Fatalf("One or more of (MONGODB_URL , MONGODB_USER , MONGODB_PASSWORD) environment variable must be set")
+		log.Fatal().Msg("one or more of MONGODB_URL, MONGODB_USER, MONGODB_PASSWORD environment variables must be set")
 	}
 	credential := options.Credential{
 		Username: MONGODB_USER,
@@ -37,7 +36,7 @@ func InitMongo() {
 	}
 	client, err := mongo.Connect(options.Client().ApplyURI(MONGODB_URL).SetAuth(credential))
 	if err != nil {
-		log.Fatalf("Failed to connect to MongoDB: %v", err)
+		log.Fatal().Err(err).Msg("failed to connect to MongoDB")
 	}
 
 	// 🔍 Verify the connection is actually alive by sending a Ping
@@ -46,7 +45,7 @@ func InitMongo() {
 
 	// Passing nil to Ping uses the primary node deployment info by default
 	if err := client.Ping(pingCtx, nil); err != nil {
-		log.Fatalf("Failed to ping MongoDB server: %v", err)
+		log.Fatal().Err(err).Msg("failed to ping MongoDB server")
 	}
 	// 1. Target the indexes interface for your collection
 	indexView := client.Database(databaseName).Collection(imageCollection).Indexes()
@@ -74,11 +73,11 @@ func InitMongo() {
 		},
 	)
 	if err != nil {
-		log.Fatalf("Failed to create MongoDB indexes: %v", err)
+		log.Fatal().Err(err).Msg("failed to create MongoDB indexes")
 	}
 
 	// 🎉 If execution gets here, the connection is active and ready!
-	fmt.Println("🚀 Successfully connected to MongoDB!")
+	log.Info().Msg("successfully connected to MongoDB")
 	Client = client
 
 }
@@ -96,7 +95,7 @@ func GetCheckSum(checksum string) (*schema.Image, bool) {
 		if err == mongo.ErrNoDocuments {
 			return nil, false
 		}
-		log.Printf("Database query failed: %v", err)
+		log.Error().Err(err).Msg("database query failed")
 		return nil, false
 	}
 
@@ -115,11 +114,11 @@ func GetImage(nano string) (*schema.Image, error) {
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			// Handle case where NO document matches the nano ID
-			log.Println("No image found with that nano ID")
+			log.Info().Msg("no image found with that nano ID")
 			return nil, mongo.ErrNoDocuments
 		}
-		
-		return nil,err
+
+		return nil, err
 	}
 	return &img, nil
 }
@@ -132,11 +131,11 @@ func InsertImage(img *schema.Image) (*schema.Image, bool) {
 
 	if err != nil {
 		if mongo.IsDuplicateKeyError(err) {
-			log.Printf("Insert failed: a document with this check_sum or nano_id already exists")
+			log.Warn().Msg("image already exists with this check_sum or nano_id")
 			return nil, false
 		}
 
-		log.Printf("Database insert failed: %v", err)
+		log.Error().Err(err).Msg("database insert failed")
 		return nil, false
 	}
 

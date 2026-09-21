@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"strconv"
@@ -17,14 +16,18 @@ import (
 	"github.com/husseinayyed/twivo-media/internal/database/redis"
 	"github.com/husseinayyed/twivo-media/internal/tasks"
 	goredis "github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog/log"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
+
 type Worker struct {
 	Client *asynq.Client
 }
 
+var workerLog = log.With().Str("service", "worker").Logger()
+
 func NewWorker() (*Worker, error) {
-	
+
 	asynqOpt, err := asynq.ParseRedisURI(redis.REDIS_URL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Redis URL for Asynq: %v", err)
@@ -32,15 +35,14 @@ func NewWorker() (*Worker, error) {
 
 	// 3. Instantiate the authenticated Asynq Client
 	client := asynq.NewClient(asynqOpt)
-	
+
 	return &Worker{Client: client}, nil
 }
-
 
 func (w *Worker) Start() {
 	redisServerOpt, err := asynq.ParseRedisURI(redis.REDIS_URL)
 	if err != nil {
-		log.Fatalf("failed to parse Redis URL for Asynq Server: %v", err)
+		workerLog.Fatal().Err(err).Msg("failed to parse Redis URL for Asynq Server")
 	}
 
 	srv := asynq.NewServer(
@@ -57,6 +59,7 @@ func (w *Worker) Start() {
 
 	mux := asynq.NewServeMux()
 	mux.HandleFunc("upload_file", w.handleUploadFileTask)
+	workerLog.Info().Msg("worker started")
 
 	// 1. Intercept OS signals inside a background thread before running the server
 	go func() {
@@ -66,17 +69,17 @@ func (w *Worker) Start() {
 
 		// This blocks the background goroutine until you trigger a signal
 		<-quit
-		log.Println("\n--> [Asynq Worker] Shutdown signal detected. Cleaning up...")
+		workerLog.Info().Msg("[Asynq Worker] Shutdown signal detected. Cleaning up...")
 
 		// 2. Coordinated Internal Shutdown Sequence
-		log.Println("[Asynq Worker] Halting queue polling loops...")
+		workerLog.Info().Msg("[Asynq Worker] Halting queue polling loops...")
 		srv.Stop() // Instantly stops workers from grabbing NEW tasks
 
-		log.Println("[Asynq Worker] Waiting for running pipelines to finish...")
+		workerLog.Info().Msg("[Asynq Worker] Waiting for running pipelines to finish...")
 		srv.Shutdown() // Blocks until currently processing items hit 100% completion
 
-		log.Println("[Asynq Worker] Safely closed down.")
-		
+		workerLog.Info().Msg("[Asynq Worker] Safely closed down.")
+
 		// If this worker runs as a completely standalone microservice binary,
 		// you can uncomment the line below to exit the OS process immediately:
 		os.Exit(0)
@@ -84,92 +87,109 @@ func (w *Worker) Start() {
 
 	// 3. Start server processing block (Blocks main execution string as before)
 	if err := srv.Run(mux); err != nil {
-		log.Fatalf("could not run server: %v", err)
+		workerLog.Fatal().Err(err).Msg("could not run server")
 	}
 }
 
-func (w *Worker) handleUploadFileTask(ctx context.Context, t *asynq.Task) error {
-    var payload tasks.UploadPayload
-    fmt.Println(payload)
-    if err := payload.Deserialize(t.Payload()); err != nil {
-        return fmt.Errorf("failed to deserialize payload: %v", err)
-    }
-    streamKey := "uploads:stream"
-    nanoKey := fmt.Sprintf("nano:%v", payload.FileUUID)
-    
-    // Prepare the event payload
-    eventData := map[string]any{
-        "user_id":    payload.UserID,
-        "tweet_id":   payload.TweetID,
-        "file_uuid":  payload.FileUUID,
-        "belongs_to": payload.BelongsTo,
-        "file_type":  payload.FileType,
-        "width":      payload.Width,
-        "height":     payload.Height,
-    }
+func (w *Worker) handleUploadFileTask(ctx context.Context, t *asynq.Task) (taskErr error) {
+	fileUUID := ""
+	workerLog.Info().Str("task_type", t.Type()).Msg("worker task started")
+	defer func() {
+		if taskErr != nil {
+			workerLog.Error().
+				Err(taskErr).
+				Str("task_type", t.Type()).
+				Str("file_uuid", fileUUID).
+				Msg("worker task failed")
+			return
+		}
+		workerLog.Info().
+			Str("task_type", t.Type()).
+			Str("file_uuid", fileUUID).
+			Msg("worker task finished")
+	}()
 
-    // Use pipeline for atomic operations
-    pipe := redis.RedisClient.TxPipeline()
-    
-    // Append data to the stream using XAdd
-    pipe.XAdd(ctx, &goredis.XAddArgs{
-        Stream: streamKey,
-        ID:     "*",
-        Values: eventData,
-    })
-    
-    // Store the hash data safely
-    pipe.HSet(ctx, nanoKey, eventData)
-    
-    // Set a 24-hour TTL on the hash key so Nginx can read it within that window
-    pipe.Expire(ctx, nanoKey, 24*time.Hour)
-    
-    // Execute pipeline
-    _, err := pipe.Exec(ctx)
-    if err != nil {
-        return fmt.Errorf("failed to execute pipeline: %v", err)
-    }
-    
-    width, err1 := strconv.ParseUint(payload.Width, 10, 16)
-    height, err2 := strconv.ParseUint(payload.Height, 10, 16)
-    if err1 != nil {
-        return fmt.Errorf("invalid image width %q: %v", payload.Width, err1)
-    }
-    if err2 != nil {
-        return fmt.Errorf("invalid image height %q: %v", payload.Height, err2)
-    }
+	var payload tasks.UploadPayload
+	if err := payload.Deserialize(t.Payload()); err != nil {
+		return fmt.Errorf("failed to deserialize payload: %v", err)
+	}
+	fileUUID = payload.FileUUID
+	streamKey := "uploads:stream"
+	nanoKey := fmt.Sprintf("nano:%v", payload.FileUUID)
 
-    cache.LruCacheNanoId.Add(payload.FileUUID, &cache.ImageResponse{
-        Width:     uint16(width),
-        Height:    uint16(height),
-        FileUUID:  payload.FileUUID,
-        BelongsTo: payload.BelongsTo,
-        OwnerId:   payload.UserID,
-        TweetId:   payload.TweetID,
-        FileType:  payload.FileType,
-    })
+	// Prepare the event payload
+	eventData := map[string]any{
+		"user_id":    payload.UserID,
+		"tweet_id":   payload.TweetID,
+		"file_uuid":  payload.FileUUID,
+		"belongs_to": payload.BelongsTo,
+		"file_type":  payload.FileType,
+		"width":      payload.Width,
+		"height":     payload.Height,
+	}
 
-    img, inserted := mongodb.InsertImage(&schema.Image{
-        ID:        primitive.NewObjectID(),
-        NanoId:    payload.FileUUID,
-        BelongsTo: payload.BelongsTo,
-		TweetId: payload.TweetID,
-        OwnerId:   payload.UserID,
-        FileType:  payload.FileType,
-        Width:     int(width),
-        Height:    int(height),
-        CheckSum:  payload.CheckSum, // Placeholder: Provide actual checksum if available in payload
-        Phash:     "nil", // Placeholder: Provide actual phash if available in payload
-        CreatedAt: time.Now(),
-        UpdatedAt: time.Now(),
-    })
+	// Use pipeline for atomic operations
+	pipe := redis.RedisClient.TxPipeline()
 
-    // 3. Optional: Recommended handling if the insert fails (e.g., due to duplicate index conflict)
-    if !inserted {
-        return fmt.Errorf("failed to insert image metadata into mongodb or image duplicate exists")
-    }
+	// Append data to the stream using XAdd
+	pipe.XAdd(ctx, &goredis.XAddArgs{
+		Stream: streamKey,
+		ID:     "*",
+		Values: eventData,
+	})
 
-    _ = img // Kept reference to prevent unused variable error if you plan to log it
-    
-    return nil
+	// Store the hash data safely
+	pipe.HSet(ctx, nanoKey, eventData)
+
+	// Set a 24-hour TTL on the hash key so Nginx can read it within that window
+	pipe.Expire(ctx, nanoKey, 24*time.Hour)
+
+	// Execute pipeline
+	_, pipelineErr := pipe.Exec(ctx)
+	if pipelineErr != nil {
+		return fmt.Errorf("failed to execute pipeline: %v", pipelineErr)
+	}
+
+	width, err1 := strconv.ParseUint(payload.Width, 10, 16)
+	height, err2 := strconv.ParseUint(payload.Height, 10, 16)
+	if err1 != nil {
+		return fmt.Errorf("invalid image width %q: %v", payload.Width, err1)
+	}
+	if err2 != nil {
+		return fmt.Errorf("invalid image height %q: %v", payload.Height, err2)
+	}
+
+	cache.LruCacheNanoId.Add(payload.FileUUID, &cache.ImageResponse{
+		Width:     uint16(width),
+		Height:    uint16(height),
+		FileUUID:  payload.FileUUID,
+		BelongsTo: payload.BelongsTo,
+		OwnerId:   payload.UserID,
+		TweetId:   payload.TweetID,
+		FileType:  payload.FileType,
+	})
+
+	img, inserted := mongodb.InsertImage(&schema.Image{
+		ID:        primitive.NewObjectID(),
+		NanoId:    payload.FileUUID,
+		BelongsTo: payload.BelongsTo,
+		TweetId:   payload.TweetID,
+		OwnerId:   payload.UserID,
+		FileType:  payload.FileType,
+		Width:     int(width),
+		Height:    int(height),
+		CheckSum:  payload.CheckSum, // Placeholder: Provide actual checksum if available in payload
+		Phash:     "nil",            // Placeholder: Provide actual phash if available in payload
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	})
+
+	// 3. Optional: Recommended handling if the insert fails (e.g., due to duplicate index conflict)
+	if !inserted {
+		return fmt.Errorf("failed to insert image metadata into mongodb or image duplicate exists")
+	}
+
+	_ = img // Kept reference to prevent unused variable error if you plan to log it
+
+	return nil
 }

@@ -2,29 +2,28 @@ package redis
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"os"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog/log"
 )
 
 var (
 	RedisClient *redis.Client
-	REDIS_URL = os.Getenv("REDIS_URL")
+	REDIS_URL   = os.Getenv("REDIS_URL")
 )
 
 func ConnectRedis() (*redis.Client, error) {
 	redisHost := REDIS_URL
 
 	if redisHost == "" {
-		log.Fatalln("REDIS_URL environment variable must be set")
+		log.Fatal().Msg("REDIS_URL environment variable must be set")
 	}
 
 	opt, err := redis.ParseURL(redisHost)
 	if err != nil {
-		log.Fatalf("Failed to parse Redis URL configuration: %v\n", err)
+		log.Fatal().Err(err).Msg("failed to parse Redis URL configuration")
 	}
 
 	opt.PoolSize = 20
@@ -40,10 +39,10 @@ func ConnectRedis() (*redis.Client, error) {
 	defer cancel()
 
 	if err := RedisClient.Ping(ctx).Err(); err != nil {
-		fmt.Println("Error connecting to Redis:", err)
+		log.Fatal().Err(err).Msg("error connecting to Redis")
 		os.Exit(1)
 	}
 
-	fmt.Println("🚀 Connected to Redis successfully!")
+	log.Info().Msg("connected to Redis successfully")
 	return RedisClient, nil
 }
