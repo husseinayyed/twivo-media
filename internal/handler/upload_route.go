@@ -17,8 +17,7 @@ import (
 	"github.com/husseinayyed/twivo-media/internal/tasks"
 	"github.com/husseinayyed/twivo-media/internal/utils"
 	"github.com/husseinayyed/twivo-media/internal/worker"
-	gonanoid "github.com/matoous/go-nanoid/v2"
-	_ "golang.org/x/image/webp"
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -45,7 +44,7 @@ func InitWorker() {
 	w, err = worker.NewWorker()
 	go func() {
 		if err != nil {
-			fmt.Println("Error worker,", err)
+			log.Error().Err(err).Msg("worker initialization failed")
 			os.Exit(1)
 			return
 		}
@@ -62,7 +61,7 @@ func UploadRoute(c *gin.Context) {
 		return
 	}
 
-	fileUUID, err := gonanoid.New(16) // Generate a unique identifier for the uploaded file
+	fileUUID, err := utils.MakeNano() // Generate a unique identifier for the uploaded file
 	hasher := sha256.New()            // Create a new SHA-256 hash instance
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to generate file identifier"})
@@ -143,7 +142,7 @@ func UploadRoute(c *gin.Context) {
 			// Attempt to delete the orphaned file in a separate goroutine to avoid blocking the response
 			go storage.DeleteOrphanFile(targetFilename)
 		}
-		fmt.Println("Error uploading file to Weed Filer:", uploadErr)
+		log.Error().Err(uploadErr).Msg("error uploading file to Weed Filer")
 		c.JSON(502, gin.H{"error": "Failed to persist file in storage backend"})
 		return
 	}
@@ -152,15 +151,15 @@ func UploadRoute(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "worker unavailable"})
 		return
 	}
-	originalUUID,_, isRepeated, isOwner,err := utils.CheckFileIfRepeated(c, ctx, hex.EncodeToString(hasher.Sum(nil)), fileUUID)
+	hexCheckSum := hex.EncodeToString(hasher.Sum(nil))
+	originalUUID, _, isRepeated, isOwner, err := utils.CheckFileIfRepeated(c, ctx, hexCheckSum, fileUUID)
 
 	if err != nil {
 		// Log the error but don't fail the upload (the file is already uploaded)
-		fmt.Printf("⚠️ Checksum check failed: %v\n", err)
+		log.Warn().Err(err).Msg("checksum check failed")
 		// Continue with normal flow (upload as new file)
 	}
 
-	fmt.Println(originalUUID,isRepeated,isOwner)
 	if isRepeated && isOwner {
 		go storage.DeleteOrphanFile(targetFilename)
 		// Return a successful response with the file details
@@ -174,12 +173,14 @@ func UploadRoute(c *gin.Context) {
 
 		return
 	}
-	
+
 	data := tasks.UploadPayload{
 		FileUUID:  fileUUID,
 		FileType:  fileType,
 		TweetID:   tweetID,
 		UserID:    userID,
+		CheckSum:  hexCheckSum,
+		Phash:     "nil",
 		Width:     fmt.Sprintf("%d", config.Width),
 		Height:    fmt.Sprintf("%d", config.Height),
 		BelongsTo: originalUUID,
@@ -191,7 +192,7 @@ func UploadRoute(c *gin.Context) {
 	if isRepeated && !isOwner {
 		go storage.DeleteOrphanFile(targetFilename)
 		// Return a successful response with the file details
-		
+
 		c.JSON(200, gin.H{
 			"status":          "success",
 			"file_url":        fileUUID,

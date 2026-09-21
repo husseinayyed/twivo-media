@@ -2,39 +2,47 @@ package redis
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog/log"
 )
 
 var (
 	RedisClient *redis.Client
+	REDIS_URL   = os.Getenv("REDIS_URL")
 )
 
-func ConnectRedis() (redisClient *redis.Client, err error) {
-	redisHost := os.Getenv("REDIS_URL")
+func ConnectRedis() (*redis.Client, error) {
+	redisHost := REDIS_URL
 
 	if redisHost == "" {
-		fmt.Println("REDIS_URL environment variable must be set")
-		os.Exit(1)
+		log.Fatal().Msg("REDIS_URL environment variable must be set")
 	}
 
-	RedisClient = redis.NewClient(&redis.Options{
-    Addr:            redisHost,        // Redis server address
-    PoolSize:        20,               // Maximum open connections
-    MinIdleConns:    5,                // Minimum idle connections to maintain
-    MaxIdleConns:    10,               // Maximum idle connections to keep
-    ConnMaxIdleTime: 5 * time.Minute,  // Close idle connections after 5 minutes
-})
+	opt, err := redis.ParseURL(redisHost)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to parse Redis URL configuration")
+	}
 
-	ctx := context.Background()
+	opt.PoolSize = 20
+	opt.MinIdleConns = 5
+	opt.MaxIdleConns = 10
+	opt.ConnMaxIdleTime = 5 * time.Minute
+
+	// 3. 🌟 Pass the complete, modified configuration to the initialization driver
+	RedisClient = redis.NewClient(opt)
+
+	// 4. Use a dedicated short-lived context
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	if err := RedisClient.Ping(ctx).Err(); err != nil {
-		fmt.Println("Error connecting to Redis:", err)
+		log.Fatal().Err(err).Msg("error connecting to Redis")
 		os.Exit(1)
 	}
 
-	fmt.Println("Connected to Redis successfully")
+	log.Info().Msg("connected to Redis successfully")
 	return RedisClient, nil
 }

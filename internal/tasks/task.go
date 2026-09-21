@@ -1,29 +1,33 @@
 package tasks
 
 import (
-	"github.com/bytedance/sonic"
 	"fmt"
+
+	"github.com/bytedance/sonic"
 	"github.com/hibiken/asynq"
+	"github.com/rs/zerolog/log"
 )
 
 type UploadPayload struct {
-    UserID   string `json:"user_id"`
-    TweetID  string `json:"tweet_id"`
-    FileUUID string `json:"file_uuid"`
+	UserID    string `json:"user_id"`
+	TweetID   string `json:"tweet_id"`
+	FileUUID  string `json:"file_uuid"`
+	CheckSum  string `json:"check_sum"`
+	Phash     string `json:"phash"`
 	BelongsTo string `json:"belongs_to"`
-    FileType string `json:"file_type"`
-    Width    string `json:"width"`
-    Height   string `json:"height"`
+	FileType  string `json:"file_type"`
+	Width     string `json:"width"`
+	Height    string `json:"height"`
 }
 
 func (p *UploadPayload) Serialize() ([]byte, error) {
-    return sonic.Marshal(p)
+	return sonic.Marshal(p)
 }
 
 func (p *UploadPayload) Deserialize(data []byte) error {
-    return sonic.Unmarshal(data, p)
+	return sonic.Unmarshal(data, p)
 }
-func ScheduleUploadTask(ac *asynq.Client,data UploadPayload) error {
+func ScheduleUploadTask(ac *asynq.Client, data UploadPayload) error {
 	payload, err := data.Serialize()
 	if err != nil {
 		return err
@@ -36,6 +40,9 @@ func ScheduleUploadTask(ac *asynq.Client,data UploadPayload) error {
 		return fmt.Errorf("could not enqueue task: %v", err)
 	}
 
-	fmt.Printf("Scheduled upload task: id=%s queue=%s\n", info.ID, info.Queue)
+	log.Info().
+		Str("task_id", info.ID).
+		Str("queue", info.Queue).
+		Msg("scheduled upload task")
 	return nil
 }

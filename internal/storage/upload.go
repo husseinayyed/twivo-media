@@ -5,52 +5,55 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"time"
-	"net"
+
 	"github.com/rs/dnscache"
+	"github.com/rs/zerolog/log"
 )
 
 var (
 	WeedFilerURL = getDefaultWeedFilerURL()
-	r = &dnscache.Resolver{}
+	r            = &dnscache.Resolver{}
 )
 
 func getDefaultWeedFilerURL() string {
-	if url := os.Getenv("WEED_FILER_URL"); url != "" {
-		return url
+	url := os.Getenv("WEED_FILER_URL")
+	if url == "" {
+		log.Fatal().Msg("WEED_FILER_URL environment variable must be set")
 	}
-	panic("WEED_FILER_URL enviroment variable must be set")
+
+	return url
 }
 
-
 var httpClient = &http.Client{
-    Transport: &http.Transport{
-        MaxIdleConns:        100,
-        MaxIdleConnsPerHost: 100,
-        IdleConnTimeout:     90 * time.Second,
-        DialContext: func(ctx context.Context, network string, addr string) (conn net.Conn, err error) {
-        host, port, err := net.SplitHostPort(addr)
-        if err != nil {
-            return nil, err
-        }
-        ips, err := r.LookupHost(ctx, host)
-        if err != nil {
-            return nil, err
-        }
-        for _, ip := range ips {
-            var dialer net.Dialer
-            conn, err = dialer.DialContext(ctx, network, net.JoinHostPort(ip, port))
-            if err == nil {
-                break
-            }
-        }
-        return
-    },
-    },
-    Timeout: 60 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+		DialContext: func(ctx context.Context, network string, addr string) (conn net.Conn, err error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			ips, err := r.LookupHost(ctx, host)
+			if err != nil {
+				return nil, err
+			}
+			for _, ip := range ips {
+				var dialer net.Dialer
+				conn, err = dialer.DialContext(ctx, network, net.JoinHostPort(ip, port))
+				if err == nil {
+					break
+				}
+			}
+			return
+		},
+	},
+	Timeout: 60 * time.Second,
 }
 
 func normalizeUploadError(err error) error {
@@ -70,12 +73,12 @@ func normalizeUploadError(err error) error {
 func StreamToWeedFiler(ctx context.Context, fileUUID, fileType string, populateStream func(pw io.Writer) error) (string, error) {
 	pr, pw := io.Pipe()
 	targetFilename := fmt.Sprintf("%s%s", fileUUID, fileType)
-	
+
 	// Structured bucket pathway mapping
 	bucketPath := fmt.Sprintf("/buckets/twivo/%s", targetFilename)
 	uploadURL := WeedFilerURL + bucketPath
 
-	// 1. FIXED: Buffered channel size of 1 ensures the background goroutine can 
+	// 1. FIXED: Buffered channel size of 1 ensures the background goroutine can
 	// always emit its result and exit, completely preventing deadlocks.
 	uploadErrChan := make(chan error, 1)
 
@@ -92,7 +95,7 @@ func StreamToWeedFiler(ctx context.Context, fileUUID, fileType string, populateS
 
 		resp, respErr := httpClient.Do(req)
 		if respErr != nil {
-			fmt.Printf("Error during HTTP request to WeedFiler: %v\n", respErr)
+			log.Error().Err(respErr).Msg("error during HTTP request to WeedFiler")
 			uploadErrChan <- respErr
 			return
 		}
@@ -110,7 +113,7 @@ func StreamToWeedFiler(ctx context.Context, fileUUID, fileType string, populateS
 	if populateErr != nil {
 		// Close the pipe with the specific error to forcefully terminate the HTTP client
 		pw.CloseWithError(populateErr)
-		
+
 		if ctx.Err() != nil {
 			return "", normalizeUploadError(ctx.Err())
 		}

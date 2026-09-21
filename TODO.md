@@ -15,12 +15,21 @@
 
 ## MongoDB
 
-- [ ] Add MongoDB to `docker-compose.yaml`.
-- [ ] Store file URLs, owners, tweet IDs, MIME types, sizes, dimensions, and SeaweedFS paths.
-- [ ] Store creation, update, and deletion timestamps.
-- [ ] Add indexes for file ID, owner ID, tweet ID, SHA-256, and pHash.
-- [ ] Add MongoDB health checks and graceful startup handling.
-      (Not started – no MongoDB changes in this diff.)
+- [x] Add MongoDB to `docker-compose.yaml`.
+- [x] Store file URLs, owners, tweet IDs, MIME types, sizes, dimensions, and SeaweedFS paths.
+- [x] Store creation and update timestamps.
+- [x] Add indexes for file ID, owner ID, tweet ID, SHA-256, and pHash.
+      (Startup creates `nano_id`, `check_sum`, and `phash` indexes.)
+- [x] Add MongoDB health checks and graceful startup handling.
+      (MongoDB connection and startup index creation now verify the client with a ping and fail fast on setup errors.)
+
+## Observability
+
+- [x] Replace application and worker logging with structured zerolog events.
+- [x] Add request start and completion logs with request ID, client IP, status, and duration.
+- [x] Forward and return `X-Request-ID` through Nginx for request correlation.
+- [x] Add structured Nginx access/error logs and bounded Docker log rotation.
+- [x] Add Make targets for following and saving global, Nginx, and application logs.
 
 ## File Hashing
 
@@ -58,14 +67,14 @@
       (Already existed with size 100,000; now extended with BelongsTo, OwnerId, etc.)
 - [ ] Add TTL support and cache invalidation.
       (Not added – LRU is size‑bounded with no TTL.)
-- [ ] Use Redis and MongoDB as fallbacks after LRU cache misses.
-      (Redis is implemented; MongoDB is pending.)
+- [x] Use Redis and MongoDB as fallbacks after LRU cache misses.
+      (Redis is implemented and MongoDB fallback is included in the image route.)
 - [ ] Track cache hits, misses, and evictions.
       (Only Nginx adds X‑Cache‑Status; internal LRU hit/miss not tracked.)
 - [x] Configure Nginx to cache successful image responses.
       (Done – proxy_cache and proxy_cache_valid are set.)
-- [x] Configure Nginx to cache image 404 responses for one minute.
-      (Done – proxy_cache_valid 404 1m.)
+- [x] Configure Nginx to cache image 404 responses.
+      (Done – proxy_cache_valid 404 10m.)
 
 ## Cuckoo Filter
 
@@ -91,8 +100,8 @@
 ## Documentation
 
 - [x] Update `README.md` after the OpenResty removal.
-- [ ] Document MongoDB environment variables.
-- [ ] Document upload, retrieval, and deletion APIs.
-- [ ] Document cache invalidation behavior.
+- [x] Document MongoDB environment variables.
+- [x] Document upload and retrieval APIs.
+- [x] Document cache behavior, including the ten-minute negative image cache.
+- [ ] Document deletion APIs once file deletion is implemented.
 - [ ] Add deployment and backup instructions.
-      (No doc updates in the diff.)

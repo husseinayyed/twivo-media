@@ -5,22 +5,22 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
-	"fmt"
 	"os"
 	"time"
+
 	"github.com/gin-gonic/gin"
-	"github.com/husseinayyed/twivo-media/internal/cache"
 	jwt "github.com/golang-jwt/jwt/v5"
+	"github.com/husseinayyed/twivo-media/internal/cache"
 	"github.com/husseinayyed/twivo-media/internal/database/redis"
+	"github.com/rs/zerolog/log"
 )
 
 var (
-	
-	JWTIssuer       = os.Getenv("JWT_ISS")
-	JWTAudience     = os.Getenv("JWT_AUD")
-	PUBLIC_KEY_PATH = os.Getenv("PUBLIC_KEY_PATH")
-	ErrInvalidToken = errors.New("the provided token is invalid")
-    tokenBlockDuration = 3 * time.Minute // 3 minutes in time.Duration nanoseconds
+	JWTIssuer          = os.Getenv("JWT_ISS")
+	JWTAudience        = os.Getenv("JWT_AUD")
+	PUBLIC_KEY_PATH    = os.Getenv("PUBLIC_KEY_PATH")
+	ErrInvalidToken    = errors.New("the provided token is invalid")
+	tokenBlockDuration = 3 * time.Minute // 3 minutes in time.Duration nanoseconds
 
 	// Global variable to hold your loaded public key across your application
 	PublicSigningKey ed25519.PublicKey
@@ -28,29 +28,29 @@ var (
 
 func init() {
 	if JWTIssuer == "" || JWTAudience == "" || PUBLIC_KEY_PATH == "" {
-		panic("One or more required environment variables (JWT_ISS, JWT_AUD, PUBLIC_KEY_PATH) are empty")
+		log.Fatal().Msg("one or more required environment variables (JWT_ISS, JWT_AUD, PUBLIC_KEY_PATH) are empty")
 	}
 	// Read and parse your Ed25519 public key file
 	b, err := os.ReadFile(PUBLIC_KEY_PATH)
 	if err != nil {
-		panic("failed to read public_key.pem: " + err.Error())
+		log.Fatal().Err(err).Msg("failed to read public_key.pem")
 	}
 
 	block, _ := pem.Decode(b)
 	if block == nil {
-		panic("failed to decode valid PEM block from public key")
+		log.Fatal().Msg("failed to decode valid PEM block from public key")
 	}
 
 	pubKeyRaw, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		panic("failed to parse PKIX public key: " + err.Error())
+		log.Fatal().Err(err).Msg("failed to parse PKIX public key")
 	}
 
 	// 3. Store the type-asserted key into your global variable
 	var ok bool
 	PublicSigningKey, ok = pubKeyRaw.(ed25519.PublicKey)
 	if !ok {
-		panic("key inside public_key.pem is not a valid Ed25519 public key")
+		log.Fatal().Msg("key inside public_key.pem is not a valid Ed25519 public key")
 	}
 }
 func VerifyToken(c *gin.Context) {
@@ -99,19 +99,19 @@ func VerifyToken(c *gin.Context) {
 	}
 	// Set a 24-hour expiration for the JTI in Redis to prevent replay attacks
 	success, err := redis.RedisClient.SetNX(ctx, jti, "true", tokenBlockDuration).Result()
-	
+
 	if err != nil {
-		fmt.Println("Database connectivity error setting JTI registry:", err)
+		log.Error().Err(err).Msg("database connectivity error setting JTI registry")
 		c.AbortWithStatusJSON(500, gin.H{"error": "Internal server validation error"})
 		return
 	}
 
 	// 3. Evaluate the result
 	if !success {
-		// If success is false, the JTI ALREADY existed in Redis. 
+		// If success is false, the JTI ALREADY existed in Redis.
 		// This means another instance or request already consumed it! Block it.
-		cache.LruCacheJTI.Add(jti, true)           
-		cache.LruCacheToken.Add(tokenString, true) 
+		cache.LruCacheJTI.Add(jti, true)
+		cache.LruCacheToken.Add(tokenString, true)
 		c.AbortWithStatusJSON(401, gin.H{"error": "Token has already been consumed"})
 		return
 	}

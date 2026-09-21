@@ -1,4 +1,4 @@
-# <img src="docs/icon.png" width="30" height="50" /> Twivo Media
+# <img src="docs/icon.png" width="30" height="50" alt="Twivo Media icon" /> Twivo Media
 
 [![Go](https://img.shields.io/badge/Go-1.26.5-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/)
 [![SeaweedFS](https://img.shields.io/badge/Storage-SeaweedFS-8B5CF6?style=flat-square)](https://seaweedfs.com/)
@@ -19,7 +19,7 @@ Twivo Media is a Go image service for Twivo. It validates and streams image uplo
 | Uploads | JPEG, PNG, and WebP; streamed to SeaweedFS |
 | Validation | `100x100` to `2048x2048`, with a 20 MiB edge limit |
 | Authentication | Ed25519 JWT with issuer, audience, and one-time JTI checks |
-| Metadata | Redis hash records created by an embedded Asynq worker |
+| Metadata | Redis hash records and MongoDB image documents created by an embedded Asynq worker |
 | Delivery | imgproxy transforms originals into WebP |
 | Caching | Nginx response cache, process-local LRU, then Redis |
 
@@ -39,13 +39,18 @@ Gin API :8020
   +--> Redis :6379 <------ Asynq worker
   |      metadata and cache
   |
+  +--> MongoDB :27017 <--- Asynq worker
+  |      durable image metadata
+  |
   +--> imgproxy :8080 ----> SeaweedFS Filer
        resize and WebP output
 ```
 
+    Uploads are streamed from the API to the SeaweedFS Filer. Image retrieval first resolves metadata through the cache and database layers, then the API reverse-proxies the request to imgproxy, which reads the original from SeaweedFS and returns WebP output.
+
 Nginx is only the public reverse proxy, cache, rate limiter, and user-agent filter. JWT validation is performed by the Go API.
 
-Nginx caches successful image responses for `10m` and image `404` responses for `1m`. The shorter negative-cache window limits stale misses while the asynchronous worker is still writing metadata.
+Nginx caches successful image responses and image `404` responses for `10m`. A cached `404` can remain until that negative-cache window expires if the asynchronous worker has not finished writing metadata.
 
 ## Features
 
@@ -56,6 +61,7 @@ Nginx caches successful image responses for `10m` and image `404` responses for 
 - Ed25519 JWT verification with issuer, audience, and JTI replay protection.
 - Redis-backed Asynq upload tasks.
 - SeaweedFS storage with imgproxy WebP delivery.
+- MongoDB persistence for image metadata with startup index creation.
 - LRU and Redis metadata lookup layers.
 - Nginx response caching, upload/image rate limits, and Nmap blocking.
 
@@ -102,8 +108,10 @@ The image route checks metadata in this order:
 
 1. **LRU cache:** fastest, process-local metadata lookup.
 2. **Redis:** shared `nano:<id>` metadata fallback.
-3. **MongoDB:** planned persistent fallback; not implemented in the current repository.
+3. **MongoDB:** durable metadata lookup when Redis does not have the record.
 4. **SeaweedFS through imgproxy:** reads the original object and returns resized WebP bytes.
+
+MongoDB stores durable image metadata and is written by the upload worker. Successful MongoDB lookups hydrate the LRU and Redis caches so the next request can serve the image without another database round trip.
 
 ![Image retrieval](docs/screenshots/04-image-cache-flow.png)
 
@@ -114,10 +122,12 @@ GET /i/:id
     |
     +-> LRU miss -> Redis hit ----------------> imgproxy -> SeaweedFS
     |
-    +-> Redis miss -> MongoDB (planned) ------> imgproxy -> SeaweedFS
+    +-> Redis miss -> MongoDB hit ------------> cache + imgproxy -> SeaweedFS
     |
     +-> no metadata --------------------------> 404
 ```
+
+> The image route now performs a `nano_id` lookup against MongoDB and exits immediately on `ErrNoDocuments` to avoid nil dereferences and incorrect 404 fallthroughs.
 
 ## Technology Stack
 
@@ -138,7 +148,12 @@ GET /i/:id
 Create `.env` in the project root:
 
 ```dotenv
-REDIS_URL=redis:6379
+APP_STAGE=dev
+REDIS_PASS=<redis-password>
+REDIS_URL=redis://:<redis-password>@redis:6379/0
+MONGODB_URL=mongodb://mongodb:27017
+MONGODB_USER=twivo
+MONGODB_PASSWORD=<password>
 IMGPROXY_URL=http://imgproxy:8080
 WEED_FILER_URL=http://weed-filer:8888
 JWT_ISS=twivo
@@ -148,14 +163,22 @@ PUBLIC_KEY_PATH=/app/keys/public.pem
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `REDIS_URL` | Yes | Redis and Asynq address |
+| `APP_STAGE` | Yes | Docker build stage; use `dev` for the local development image |
+| `REDIS_PASS` | Yes | Redis container password, matching the `requirepass` setting |
+| `REDIS_URL` | Yes | Redis URL used by Go, including the password in `redis://:password@host:port/0` format |
+| `MONGODB_URL` | Yes | MongoDB address |
+| `MONGODB_USER` | Yes | MongoDB username |
+| `MONGODB_PASSWORD` | Yes | MongoDB password |
 | `IMGPROXY_URL` | Yes | imgproxy base URL |
 | `WEED_FILER_URL` | Yes | SeaweedFS Filer URL |
 | `JWT_ISS` | Yes | Expected JWT issuer |
 | `JWT_AUD` | Yes | Expected JWT audience |
 | `PUBLIC_KEY_PATH` | Yes | Ed25519 public-key PEM path |
+| `GIN_MODE` | No | Gin runtime mode, typically `debug`, `release`, or `test` |
 
 The API reads the JWT issuer, audience, and Ed25519 public-key path from these environment variables and fails during startup if they are empty.
+
+MongoDB image metadata is stored in the `twivo.images` collection. Startup creates indexes for `nano_id`, `check_sum`, and `phash`.
 
 ### Generate Ed25519 Keys
 
@@ -174,30 +197,56 @@ The script checks that OpenSSL is installed, asks for confirmation before overwr
 
 ## Run Locally
 
-Start the Compose infrastructure:
+Start the development containers with the development Compose file:
 
 ```bash
-docker compose up -d --build
+make dev
 ```
 
-The development image uses an idle command. Start the API and embedded Asynq worker in the `twivo-media` container:
+The development image stays idle so it does not start the API automatically. Open a shell in the media container:
 
 ```bash
-docker compose exec twivo-media go run .
+make dev-shell
+```
+
+Start the API and embedded Asynq worker from that shell:
+
+```bash
+go run .
 ```
 
 The public service is available at `http://localhost`.
 
 ```bash
-# Stop services
-docker compose down
+# Stop development services
+make dev-down
 
-# Stop services and remove SeaweedFS volumes
-docker compose down -v
+# Stop services and remove development volumes
+make dev-clean
 
 # Run tests
 go test ./...
 ```
+
+### View Logs
+
+Docker Compose keeps container logs with bounded rotation: each container keeps up to five `10 MiB` JSON log files. Follow logs from the repository root:
+
+```bash
+# Follow logs from every service
+make logs
+
+# Follow only Nginx or the Go app logs
+make logs-nginx
+make logs-app
+
+# Save a timestamped snapshot under logs/
+make logs-save
+make logs-save-nginx
+make logs-save-app
+```
+
+Nginx writes structured access logs to the container output, including the method, path, status, client IP, upstream status, request duration, and `request_id`. The Go API and worker use structured zerolog output. The same `X-Request-ID` is forwarded to the API and returned in responses, making it possible to correlate a client request across Nginx and the application logs.
 
 ## API
 
@@ -281,7 +330,7 @@ docker compose exec twivo-media wget -qO- http://127.0.0.1:8020/ping
 
 ## Troubleshooting
 
-If an upload returns successfully but `GET /i/:id` returns `404`, check that the API log contains `Starting processing` and `Scheduled upload task`. The worker must be running and connected to the same Redis instance. Nginx caches image `404` responses for only 10 minutes, so wait for the worker and retry after the negative-cache window expires.
+If an upload returns successfully but `GET /i/:id` returns `404`, check that the API log contains `Scheduled upload task` and that the worker is connected to the same Redis instance. The worker writes Redis metadata asynchronously, so a request can miss before processing completes. Nginx caches image `404` responses for up to 10 minutes; purge the Nginx cache or retry after that window expires.
 
 ## License
 
