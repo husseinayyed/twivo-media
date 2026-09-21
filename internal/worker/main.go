@@ -114,40 +114,13 @@ func (w *Worker) handleUploadFileTask(ctx context.Context, t *asynq.Task) (taskE
 		return fmt.Errorf("failed to deserialize payload: %v", err)
 	}
 	fileUUID = payload.FileUUID
-	streamKey := "uploads:stream"
-	nanoKey := fmt.Sprintf("nano:%v", payload.FileUUID)
+	return processUploadFileTask(ctx, payload)
+}
 
-	// Prepare the event payload
-	eventData := map[string]any{
-		"user_id":    payload.UserID,
-		"tweet_id":   payload.TweetID,
-		"file_uuid":  payload.FileUUID,
-		"belongs_to": payload.BelongsTo,
-		"file_type":  payload.FileType,
-		"width":      payload.Width,
-		"height":     payload.Height,
-	}
-
-	// Use pipeline for atomic operations
-	pipe := redis.RedisClient.TxPipeline()
-
-	// Append data to the stream using XAdd
-	pipe.XAdd(ctx, &goredis.XAddArgs{
-		Stream: streamKey,
-		ID:     "*",
-		Values: eventData,
-	})
-
-	// Store the hash data safely
-	pipe.HSet(ctx, nanoKey, eventData)
-
-	// Set a 24-hour TTL on the hash key so Nginx can read it within that window
-	pipe.Expire(ctx, nanoKey, 24*time.Hour)
-
-	// Execute pipeline
-	_, pipelineErr := pipe.Exec(ctx)
-	if pipelineErr != nil {
-		return fmt.Errorf("failed to execute pipeline: %v", pipelineErr)
+func processUploadFileTask(ctx context.Context, payload tasks.UploadPayload) error {
+	eventData := uploadEventData(payload)
+	if err := storeUploadEvent(ctx, payload.FileUUID, eventData); err != nil {
+		return err
 	}
 
 	width, err1 := strconv.ParseUint(payload.Width, 10, 16)
@@ -169,6 +142,38 @@ func (w *Worker) handleUploadFileTask(ctx context.Context, t *asynq.Task) (taskE
 		FileType:  payload.FileType,
 	})
 
+	return insertImageMetadata(payload, width, height)
+}
+
+func uploadEventData(payload tasks.UploadPayload) map[string]any {
+	return map[string]any{
+		"user_id":    payload.UserID,
+		"tweet_id":   payload.TweetID,
+		"file_uuid":  payload.FileUUID,
+		"belongs_to": payload.BelongsTo,
+		"file_type":  payload.FileType,
+		"width":      payload.Width,
+		"height":     payload.Height,
+	}
+}
+
+func storeUploadEvent(ctx context.Context, fileUUID string, eventData map[string]any) error {
+	redisKey := fmt.Sprintf("nano:%v", fileUUID)
+	pipe := redis.RedisClient.TxPipeline()
+	pipe.XAdd(ctx, &goredis.XAddArgs{
+		Stream: "uploads:stream",
+		ID:     "*",
+		Values: eventData,
+	})
+	pipe.HSet(ctx, redisKey, eventData)
+	pipe.Expire(ctx, redisKey, 24*time.Hour)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("failed to execute pipeline: %v", err)
+	}
+	return nil
+}
+
+func insertImageMetadata(payload tasks.UploadPayload, width, height uint64) error {
 	img, inserted := mongodb.InsertImage(&schema.Image{
 		ID:        primitive.NewObjectID(),
 		NanoId:    payload.FileUUID,
@@ -190,6 +195,5 @@ func (w *Worker) handleUploadFileTask(ctx context.Context, t *asynq.Task) (taskE
 	}
 
 	_ = img // Kept reference to prevent unused variable error if you plan to log it
-
 	return nil
 }

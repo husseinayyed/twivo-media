@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -16,6 +15,7 @@ import (
 	"github.com/husseinayyed/twivo-media/internal/cache"
 	"github.com/husseinayyed/twivo-media/internal/database/mongodb"
 	"github.com/husseinayyed/twivo-media/internal/database/redis"
+	"github.com/rs/zerolog/log"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
@@ -29,11 +29,11 @@ const internalServerErrorMessage = "Internal server error"
 
 func init() {
 	if IMGPROXY_URL == "" {
-		log.Fatalln("IMGPROXY_URL enviroment variable must be set")
+		log.Fatal().Msg("IMGPROXY_URL environment variable must be set")
 	}
 	u, err := url.ParseRequestURI(IMGPROXY_URL)
 	if err != nil {
-		log.Fatalln("Failed to parse URL")
+		log.Fatal().Err(err).Msg("failed to parse IMGPROXY_URL")
 	}
 	imgproxyProxy = httputil.NewSingleHostReverseProxy(&url.URL{
 		Scheme: u.Scheme,
