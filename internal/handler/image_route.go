@@ -64,91 +64,89 @@ func ImageRoute(c *gin.Context) {
 		return
 	}
 
-	// 1. LRU Cache
 	if imageResponse, found := cache.LruCacheNanoId.Get(imageID); found {
 		ServeImageDirect(c, imageID, imageResponse)
 		return
 	}
 
-	// 2. Redis
-	redisKey := fmt.Sprintf("nano:%v", imageID)
-	exists, err := redis.RedisClient.Exists(c, redisKey).Result()
+	imageResponse, found, err := imageFromRedis(ctx, imageID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": internalServerErrorMessage})
 		return
 	}
-
-	if exists > 0 {
-		hashData, err := redis.RedisClient.HGetAll(c, redisKey).Result()
-		if err != nil {
-			c.JSON(500, gin.H{"error": internalServerErrorMessage})
-			return
-		}
-
-		width, _ := strconv.ParseUint(hashData["width"], 10, 16)
-		height, _ := strconv.ParseUint(hashData["height"], 10, 16)
-		belongsTo := hashData["belongs_to"]
-		fileType := hashData["file_type"]
-
-		data := &cache.ImageResponse{
-			Width:     uint16(width),
-			Height:    uint16(height),
-			FileType:  fileType,
-			BelongsTo: belongsTo,
-		}
-
-		cache.LruCacheNanoId.Add(imageID, data)
-		ServeImageDirect(c, imageID, data)
+	if found {
+		ServeImageDirect(c, imageID, imageResponse)
 		return
-	} else {
-		image, err := mongodb.GetImage(imageID)
-		if err != nil {
-			if errors.Is(err, mongo.ErrNoDocuments) {
-				c.JSON(404, gin.H{"error": "Image not found"})
-				return
-			}
-			c.JSON(500, gin.H{"error": internalServerErrorMessage})
-			return
-		}
-
-		data := &cache.ImageResponse{
-			Width:     uint16(image.Width),
-			Height:    uint16(image.Height),
-			FileType:  image.FileType,
-			BelongsTo: image.BelongsTo,
-		}
-
-		cache.LruCacheNanoId.Add(imageID, data)
-		nanoKey := fmt.Sprintf("nano:%v", image.NanoId)
-
-		// Prepare the event payload
-		eventData := map[string]any{
-			"user_id":    image.OwnerId,
-			"tweet_id":   image.TweetId,
-			"file_uuid":  image.NanoId,
-			"belongs_to": image.BelongsTo,
-			"file_type":  image.FileType,
-			"width":      image.Width,
-			"height":     image.Height,
-		}
-
-		// Use pipeline for atomic operations
-		pipe := redis.RedisClient.TxPipeline()
-
-		// Store the hash data safely
-		pipe.HSet(ctx, nanoKey, eventData)
-
-		// Set a 24-hour TTL on the hash key so Nginx can read it within that window
-		pipe.Expire(ctx, nanoKey, 24*time.Hour)
-
-		// Execute pipeline
-		_, err = pipe.Exec(ctx)
-		if err != nil {
-			c.JSON(500, gin.H{"error": internalServerErrorMessage})
-			return
-		}
-        ServeImageDirect(c,imageID,data)
 	}
-    
+
+	imageResponse, err = imageFromMongo(ctx, imageID)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			c.JSON(404, gin.H{"error": "Image not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": internalServerErrorMessage})
+		return
+	}
+	ServeImageDirect(c, imageID, imageResponse)
+}
+
+func imageFromRedis(ctx context.Context, imageID string) (*cache.ImageResponse, bool, error) {
+	redisKey := fmt.Sprintf("nano:%v", imageID)
+	exists, err := redis.RedisClient.Exists(ctx, redisKey).Result()
+	if err != nil {
+		return nil, false, err
+	}
+	if exists == 0 {
+		return nil, false, nil
+	}
+
+	hashData, err := redis.RedisClient.HGetAll(ctx, redisKey).Result()
+	if err != nil {
+		return nil, false, err
+	}
+	width, _ := strconv.ParseUint(hashData["width"], 10, 16)
+	height, _ := strconv.ParseUint(hashData["height"], 10, 16)
+	data := &cache.ImageResponse{
+		Width:     uint16(width),
+		Height:    uint16(height),
+		FileType:  hashData["file_type"],
+		BelongsTo: hashData["belongs_to"],
+	}
+	cache.LruCacheNanoId.Add(imageID, data)
+	return data, true, nil
+}
+
+func imageFromMongo(ctx context.Context, imageID string) (*cache.ImageResponse, error) {
+	image, err := mongodb.GetImage(imageID)
+	if err != nil {
+		return nil, err
+	}
+
+	data := &cache.ImageResponse{
+		Width:     uint16(image.Width),
+		Height:    uint16(image.Height),
+		FileType:  image.FileType,
+		BelongsTo: image.BelongsTo,
+	}
+	cache.LruCacheNanoId.Add(imageID, data)
+
+	eventData := map[string]any{
+		"user_id":    image.OwnerId,
+		"tweet_id":   image.TweetId,
+		"file_uuid":  image.NanoId,
+		"belongs_to": image.BelongsTo,
+		"file_type":  image.FileType,
+		"width":      image.Width,
+		"height":     image.Height,
+	}
+	redisKey := fmt.Sprintf("nano:%v", image.NanoId)
+	pipe := redis.RedisClient.TxPipeline()
+	pipe.HSet(ctx, redisKey, eventData)
+	pipe.Expire(ctx, redisKey, 24*time.Hour)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, err
+	}
+	return data, nil
 
 }
