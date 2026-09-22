@@ -198,11 +198,15 @@ func InsertImage(img *schema.Image) (*schema.Image, bool) {
 		return img, nil
 	})
 	if err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			log.Info().Err(err).Msg("image already exists with this check_sum or nano_id")
+			return nil, false
+		}
 		log.Error().Err(err).Msg("database insert failed")
 		return nil, false
 	}
 	if result == nil {
-		log.Warn().Msg("image already exists with this check_sum or nano_id")
+		log.Info().Msg("image already exists with this check_sum or nano_id")
 		return nil, false
 	}
 
