@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/husseinayyed/twivo-media/internal/breaker"
 	"github.com/husseinayyed/twivo-media/internal/database/mongodb/schema"
 	"github.com/rs/zerolog/log"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -24,29 +25,42 @@ var (
 	MONGODB_USER     = os.Getenv("MONGODB_USER")
 	MONGODB_PASSWORD = os.Getenv("MONGODB_PASSWORD")
 	Client           *mongo.Client
+	
 )
+
 
 func InitMongo() {
 	if MONGODB_URL == "" || MONGODB_USER == "" || MONGODB_PASSWORD == "" {
 		log.Fatal().Msg("one or more of MONGODB_URL, MONGODB_USER, MONGODB_PASSWORD environment variables must be set")
 	}
-	credential := options.Credential{
-		Username: MONGODB_USER,
-		Password: MONGODB_PASSWORD,
-	}
-	client, err := mongo.Connect(options.Client().ApplyURI(MONGODB_URL).SetAuth(credential))
+
+	var client *mongo.Client
+	var err error
+
+	_, err = breaker.MongoDB.Execute(func() (any, error) {
+		credential := options.Credential{
+			Username: MONGODB_USER,
+			Password: MONGODB_PASSWORD,
+		}
+
+		client, err = mongo.Connect(options.Client().ApplyURI(MONGODB_URL).SetAuth(credential))
+		if err != nil {
+			return nil, err
+		}
+
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer pingCancel()
+
+		if err = client.Ping(pingCtx, nil); err != nil {
+			return nil, err
+		}
+
+		return client, nil
+	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to connect to MongoDB")
 	}
 
-	// 🔍 Verify the connection is actually alive by sending a Ping
-	pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer pingCancel()
-
-	// Passing nil to Ping uses the primary node deployment info by default
-	if err := client.Ping(pingCtx, nil); err != nil {
-		log.Fatal().Err(err).Msg("failed to ping MongoDB server")
-	}
 	// 1. Target the indexes interface for your collection
 	indexView := client.Database(databaseName).Collection(imageCollection).Indexes()
 
@@ -83,69 +97,118 @@ func InitMongo() {
 }
 
 func GetCheckSum(checksum string) (*schema.Image, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+	
 
-	var img schema.Image
-	err := Client.Database(databaseName).Collection(imageCollection).FindOne(ctx, bson.M{
-		"check_sum": checksum,
-	}).Decode(&img)
+	result, err := breaker.MongoDB.Execute(func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
 
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return nil, false
+		var img schema.Image
+		err := Client.Database(databaseName).Collection(imageCollection).FindOne(ctx, bson.M{
+			"check_sum": checksum,
+		}).Decode(&img)
+
+		if err != nil {
+			if err == mongo.ErrNoDocuments {
+				return nil, nil
+			}
+			return nil, err
 		}
+
+		return &img, nil
+	})
+	if err != nil {
 		log.Error().Err(err).Msg("database query failed")
 		return nil, false
 	}
-
-	return &img, true
-}
-func GetImage(nano string) (*schema.Image, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	var img schema.Image
-	err := Client.Database(databaseName).
-		Collection(imageCollection).
-		FindOne(ctx, bson.M{"nano_id": nano}).
-		Decode(&img) // <-- Decode is required to fetch the data and errors
-
-	// 3. Handle errors properly
-	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			// Handle case where NO document matches the nano ID
-			log.Info().Msg("no image found with that nano ID")
-			return nil, mongo.ErrNoDocuments
-		}
-
-		return nil, err
-	}
-	return &img, nil
-}
-func InsertImage(img *schema.Image) (*schema.Image, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	// 1. Capture the result so we can get the generated ID
-	res, err := Client.Database(databaseName).Collection(imageCollection).InsertOne(ctx, img)
-
-	if err != nil {
-		if mongo.IsDuplicateKeyError(err) {
-			log.Warn().Msg("image already exists with this check_sum or nano_id")
-			return nil, false
-		}
-
-		log.Error().Err(err).Msg("database insert failed")
+	if result == nil {
 		return nil, false
 	}
 
-	// 2. If the original ID was empty, fill it with the database-generated ID
-	if img.ID.IsZero() {
-		if oid, ok := res.InsertedID.(primitive.ObjectID); ok {
-			img.ID = oid
-		}
+	img, ok := result.(*schema.Image)
+	if !ok {
+		return nil, false
+	}
+	return img, true
+}
+
+func GetImage(nano string) (*schema.Image, error) {
+	if breaker.MongoDB == nil {
+		log.Warn().Msg("mongodb circuit breaker not initialized")
 	}
 
-	// 3. Returning 'img' returns the mutated pointer
-	return img, true
+	result, err := breaker.MongoDB.Execute(func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		var img schema.Image
+		err := Client.Database(databaseName).
+			Collection(imageCollection).
+			FindOne(ctx, bson.M{"nano_id": nano}).
+			Decode(&img)
+
+		if err != nil {
+			if errors.Is(err, mongo.ErrNoDocuments) {
+				return nil, mongo.ErrNoDocuments
+			}
+			return nil, err
+		}
+		return &img, nil
+	})
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			log.Info().Msg("no image found with that nano ID")
+			return nil, mongo.ErrNoDocuments
+		}
+		return nil, err
+	}
+	if result == nil {
+		return nil, mongo.ErrNoDocuments
+	}
+
+	img, ok := result.(*schema.Image)
+	if !ok {
+		return nil, mongo.ErrNoDocuments
+	}
+	return img, nil
+}
+
+func InsertImage(img *schema.Image) (*schema.Image, bool) {
+	if breaker.MongoDB == nil {
+		log.Warn().Msg("mongodb circuit breaker not initialized")
+	}
+
+	result, err := breaker.MongoDB.Execute(func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		res, err := Client.Database(databaseName).Collection(imageCollection).InsertOne(ctx, img)
+		if err != nil {
+			if mongo.IsDuplicateKeyError(err) {
+				return nil, nil
+			}
+			return nil, err
+		}
+
+		if img.ID.IsZero() {
+			if oid, ok := res.InsertedID.(primitive.ObjectID); ok {
+				img.ID = oid
+			}
+		}
+
+		return img, nil
+	})
+	if err != nil {
+		log.Error().Err(err).Msg("database insert failed")
+		return nil, false
+	}
+	if result == nil {
+		log.Warn().Msg("image already exists with this check_sum or nano_id")
+		return nil, false
+	}
+
+	inserted, ok := result.(*schema.Image)
+	if !ok {
+		return nil, false
+	}
+	return inserted, true
 }

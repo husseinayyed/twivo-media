@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/husseinayyed/twivo-media/internal/breaker"
 	"github.com/rs/dnscache"
 	"github.com/rs/zerolog/log"
 )
@@ -71,91 +72,105 @@ func normalizeUploadError(err error) error {
 
 // StreamToWeedFiler handles uploading an incoming data stream directly to SeaweedFS Filer via HTTP PUT using an io.Pipe.
 func StreamToWeedFiler(ctx context.Context, fileUUID, fileType string, populateStream func(pw io.Writer) error) (string, error) {
-	pr, pw := io.Pipe()
-	targetFilename := fmt.Sprintf("%s%s", fileUUID, fileType)
+	result, err := breaker.SeaweedFS.Execute(func() (any, error) {
+		pr, pw := io.Pipe()
+		targetFilename := fmt.Sprintf("%s%s", fileUUID, fileType)
 
-	// Structured bucket pathway mapping
-	bucketPath := fmt.Sprintf("/buckets/twivo/%s", targetFilename)
-	uploadURL := WeedFilerURL + bucketPath
+		// Structured bucket pathway mapping
+		bucketPath := fmt.Sprintf("/buckets/twivo/%s", targetFilename)
+		uploadURL := WeedFilerURL + bucketPath
 
-	// 1. FIXED: Buffered channel size of 1 ensures the background goroutine can
-	// always emit its result and exit, completely preventing deadlocks.
-	uploadErrChan := make(chan error, 1)
+		// 1. FIXED: Buffered channel size of 1 ensures the background goroutine can
+		// always emit its result and exit, completely preventing deadlocks.
+		uploadErrChan := make(chan error, 1)
 
-	go func() {
-		// Ensure the pipe reader is closed on exit to unlock any stuck pipe writers
-		defer pr.Close()
+		go func() {
+			// Ensure the pipe reader is closed on exit to unlock any stuck pipe writers
+			defer pr.Close()
 
-		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, pr)
-		if reqErr != nil {
-			uploadErrChan <- reqErr
-			return
+			req, reqErr := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, pr)
+			if reqErr != nil {
+				uploadErrChan <- reqErr
+				return
+			}
+			req.Header.Set("Content-Type", "application/octet-stream")
+
+			resp, respErr := httpClient.Do(req)
+			if respErr != nil {
+				log.Error().Err(respErr).Msg("error during HTTP request to WeedFiler")
+				uploadErrChan <- respErr
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+				uploadErrChan <- fmt.Errorf("weedfiler returned status: %d", resp.StatusCode)
+				return
+			}
+			uploadErrChan <- nil
+		}()
+
+		// 2. Populate the pipe writer with the upload data in a separate goroutine
+		populateErr := populateStream(pw)
+		if populateErr != nil {
+			// Close the pipe with the specific error to forcefully terminate the HTTP client
+			pw.CloseWithError(populateErr)
+
+			if ctx.Err() != nil {
+				return "", normalizeUploadError(ctx.Err())
+			}
+			if errors.Is(populateErr, io.ErrClosedPipe) || strings.Contains(populateErr.Error(), "closed pipe") {
+				return "", normalizeUploadError(ctx.Err())
+			}
+			return "", normalizeUploadError(populateErr)
 		}
-		req.Header.Set("Content-Type", "application/octet-stream")
 
-		resp, respErr := httpClient.Do(req)
-		if respErr != nil {
-			log.Error().Err(respErr).Msg("error during HTTP request to WeedFiler")
-			uploadErrChan <- respErr
-			return
-		}
-		defer resp.Body.Close()
+		// Safely close the pipe to signal completion to HTTP client
+		pw.Close()
 
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-			uploadErrChan <- fmt.Errorf("weedfiler returned status: %d", resp.StatusCode)
-			return
-		}
-		uploadErrChan <- nil
-	}()
-
-	// 2. Populate the pipe writer with the upload data in a separate goroutine
-	populateErr := populateStream(pw)
-	if populateErr != nil {
-		// Close the pipe with the specific error to forcefully terminate the HTTP client
-		pw.CloseWithError(populateErr)
-
-		if ctx.Err() != nil {
+		// 3. FIXED: Handle immediate fallback if context cancels while waiting for server response
+		select {
+		case <-ctx.Done():
 			return "", normalizeUploadError(ctx.Err())
+		case err := <-uploadErrChan:
+			if err != nil {
+				return "", normalizeUploadError(err)
+			}
 		}
-		if errors.Is(populateErr, io.ErrClosedPipe) || strings.Contains(populateErr.Error(), "closed pipe") {
-			return "", normalizeUploadError(ctx.Err())
-		}
-		return "", normalizeUploadError(populateErr)
+
+		// Return the relative bucket pathway string for clean downstream tracking/deletion
+		return bucketPath, nil
+	})
+	if err != nil {
+		return "", err
 	}
 
-	// Safely close the pipe to signal completion to HTTP client
-	pw.Close()
-
-	// 3. FIXED: Handle immediate fallback if context cancels while waiting for server response
-	select {
-	case <-ctx.Done():
-		return "", normalizeUploadError(ctx.Err())
-	case err := <-uploadErrChan:
-		if err != nil {
-			return "", normalizeUploadError(err)
-		}
+	path, ok := result.(string)
+	if !ok {
+		return "", fmt.Errorf("seaweedfs breaker returned invalid result type")
 	}
-
-	// Return the relative bucket pathway string for clean downstream tracking/deletion
-	return bucketPath, nil
+	return path, nil
 }
 
 // DeleteOrphanFile removes an incomplete or rejected file upload from SeaweedFS Filer
 func DeleteOrphanFile(bucketPath string) {
-	// 4. FIXED: Properly absolute resolves the pathway url match
-	if !strings.HasPrefix(bucketPath, "/") {
-		bucketPath = "/" + bucketPath
-	}
-	deleteURL := WeedFilerURL + bucketPath
+	_, _ = breaker.SeaweedFS.Execute(func() (any, error) {
+		// 4. FIXED: Properly absolute resolves the pathway url match
+		if !strings.HasPrefix(bucketPath, "/") {
+			bucketPath = "/" + bucketPath
+		}
+		deleteURL := WeedFilerURL + bucketPath
 
-	req, err := http.NewRequest(http.MethodDelete, deleteURL, nil)
-	if err != nil {
-		return
-	}
+		req, err := http.NewRequest(http.MethodDelete, deleteURL, nil)
+		if err != nil {
+			return nil, err
+		}
 
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return
-	}
-	defer resp.Body.Close()
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		return nil, nil
+	})
 }
