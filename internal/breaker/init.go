@@ -53,30 +53,20 @@ func New() *Breakers {
 }
 
 // Execute runs fn under the protection of the breaker for the given service.
-// It uses a generic type parameter T to guarantee type safety for the caller,
-// eliminating the need for manual type assertions.
-func (b *Breakers) Execute[T any](service ServiceName, fn func() (T, error)) (T, error) {
+// The underlying gobreaker is typed to any, so callers perform the final type assertion
+// after the call returns.
+func (b *Breakers) Execute(service ServiceName, fn func() (any, error)) (any, error) {
 	cb, ok := b.breakers[service]
 	if !ok {
-		var zero T
-		return zero, fmt.Errorf("breaker: no circuit registered for service %q", service)
+		return nil, fmt.Errorf("breaker: no circuit registered for service %q", service)
 	}
 
-	result, err := cb.Execute(func() (any, error) {
-		return fn()
-	})
+	result, err := cb.Execute(fn)
 	if err != nil {
-		var zero T
-		return zero, err
+		return nil, err
 	}
 
-	typed, ok := result.(T)
-	if !ok {
-		var zero T
-		return zero, fmt.Errorf("breaker: type assertion failed for service %q", service)
-	}
-
-	return typed, nil
+	return result, nil
 }
 
 // State returns the current state of a service's breaker (for metrics/debugging).

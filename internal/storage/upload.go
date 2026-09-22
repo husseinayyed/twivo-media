@@ -80,8 +80,9 @@ func StreamToWeedFiler(ctx context.Context, fileUUID, fileType string, populateS
 		bucketPath := fmt.Sprintf("/buckets/twivo/%s", targetFilename)
 		uploadURL := WeedFilerURL + bucketPath
 
-		// 1. FIXED: Buffered channel size of 1 ensures the background goroutine can
-		// always emit its result and exit, completely preventing deadlocks.
+		// Use a single-slot buffered channel so the goroutine can always report completion or error
+		// without blocking. This keeps the upload path from deadlocking when the pipe writer exits
+		// early or the server responds quickly.
 		uploadErrChan := make(chan error, 1)
 
 		go func() {
@@ -110,7 +111,9 @@ func StreamToWeedFiler(ctx context.Context, fileUUID, fileType string, populateS
 			uploadErrChan <- nil
 		}()
 
-		// 2. Populate the pipe writer with the upload data in a separate goroutine
+		// Populate the pipe writer in the current goroutine so the upload payload is streamed while
+		// the HTTP request is concurrently reading from the pipe. This keeps memory usage bounded and
+		// preserves the backpressure behavior of the underlying io.Pipe.
 		populateErr := populateStream(pw)
 		if populateErr != nil {
 			// Close the pipe with the specific error to forcefully terminate the HTTP client
@@ -128,7 +131,9 @@ func StreamToWeedFiler(ctx context.Context, fileUUID, fileType string, populateS
 		// Safely close the pipe to signal completion to HTTP client
 		pw.Close()
 
-		// 3. FIXED: Handle immediate fallback if context cancels while waiting for server response
+		// A cancellation can happen while the server is still processing the upload. We fail fast in
+		// that case and convert the context error to a normalized domain error instead of surfacing a
+		// lower-level transport issue back to the caller.
 		select {
 		case <-ctx.Done():
 			return "", normalizeUploadError(ctx.Err())
@@ -138,7 +143,8 @@ func StreamToWeedFiler(ctx context.Context, fileUUID, fileType string, populateS
 			}
 		}
 
-		// Return the relative bucket pathway string for clean downstream tracking/deletion
+		// Return the relative bucket path so downstream code can identify and delete the same artifact
+		// without needing to reconstruct the absolute SeaweedFS URL.
 		return bucketPath, nil
 	})
 	if err != nil {
@@ -155,7 +161,8 @@ func StreamToWeedFiler(ctx context.Context, fileUUID, fileType string, populateS
 // DeleteOrphanFile removes an incomplete or rejected file upload from SeaweedFS Filer
 func DeleteOrphanFile(bucketPath string) {
 	_, _ = breaker.SeaweedFS.Execute(func() (any, error) {
-		// 4. FIXED: Properly absolute resolves the pathway url match
+		// Ensure the path is absolute before constructing the delete URL so the request targets the
+		// same bucket layout that was used during upload.
 		if !strings.HasPrefix(bucketPath, "/") {
 			bucketPath = "/" + bucketPath
 		}
