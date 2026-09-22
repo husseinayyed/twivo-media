@@ -10,7 +10,9 @@ import (
 	"github.com/sony/gobreaker/v2"
 )
 
-// ServiceName identifies a distinct external dependency.
+// ServiceName identifies a distinct external dependency that should be protected by a dedicated
+// circuit breaker. This prevents one unhealthy upstream service from cascading into unrelated
+// request paths.
 type ServiceName string
 
 const (
@@ -20,19 +22,29 @@ const (
 	ServiceImgProxy  ServiceName = "imgproxy"
 )
 
-// Breakers holds typed circuit breakers for each external service.
+// Breakers holds the process-wide set of circuit breakers for the app's external dependencies.
+// Keeping them in a registry gives us one shared state across the whole service lifecycle.
 type Breakers struct {
 	breakers map[ServiceName]*gobreaker.CircuitBreaker[any]
 }
 
 var (
-	MongoDB   = newBreaker("mongodb", 60*time.Second, 30*time.Second)
-	Redis     = newBreaker("redis", 30*time.Second, 15*time.Second)
+	// MongoDB is the metadata store for image records. It is the slowest dependency in the chain,
+	// so its window is broader and it opens more conservatively.
+	MongoDB = newBreaker("mongodb", 60*time.Second, 30*time.Second)
+	// Redis is the fast cache layer. It must fail fast under bursty load because the cache is meant
+	// to absorb pressure and protect the slower downstream layers.
+	Redis = newBreaker("redis", 30*time.Second, 15*time.Second)
+	// SeaweedFS stores the uploaded media blobs. It is critical to retrieval but still a networked
+	// dependency that should be protected from repeated retry storms.
 	SeaweedFS = newBreaker("seaweedfs", 60*time.Second, 30*time.Second)
-	ImgProxy  = newBreaker("imgproxy", 30*time.Second, 15*time.Second)
+	// ImgProxy handles resize and format conversion. It is a networked transformation layer, so it
+	// benefits from a tighter recovery cycle than the metadata store.
+	ImgProxy = newBreaker("imgproxy", 30*time.Second, 15*time.Second)
 )
 
-// Init initializes the shared breaker set used by the app.
+// Init initializes the shared breaker set used by the app. Rebuilding these values on startup keeps
+// the process state deterministic before the handlers begin issuing upstream calls.
 func Init() {
 	MongoDB = newBreaker("mongodb", 60*time.Second, 30*time.Second)
 	Redis = newBreaker("redis", 30*time.Second, 15*time.Second)
@@ -40,7 +52,7 @@ func Init() {
 	ImgProxy = newBreaker("imgproxy", 30*time.Second, 15*time.Second)
 }
 
-// New creates and configures all circuit breakers with service-specific settings.
+// New creates and returns a registry of circuit breakers keyed by dependency name.
 func New() *Breakers {
 	return &Breakers{
 		breakers: map[ServiceName]*gobreaker.CircuitBreaker[any]{
