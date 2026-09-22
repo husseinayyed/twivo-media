@@ -22,6 +22,7 @@ Twivo Media is a Go image service for Twivo. It validates and streams image uplo
 | Metadata | Redis hash records and MongoDB image documents created by an embedded Asynq worker |
 | Delivery | imgproxy transforms originals into WebP |
 | Caching | Nginx response cache, process-local LRU, then Redis |
+| Resilience | Circuit breakers for MongoDB, Redis, SeaweedFS, and imgproxy |
 
 ## Architecture
 
@@ -50,7 +51,9 @@ Gin API :8020
 
 Nginx is only the public reverse proxy, cache, rate limiter, and user-agent filter. JWT validation is performed by the Go API.
 
-Nginx caches successful image responses and image `404` responses for `10m`. A cached `404` can remain until that negative-cache window expires if the asynchronous worker has not finished writing metadata.
+The Go service also wraps Redis, MongoDB, SeaweedFS, and imgproxy calls in circuit breakers so repeated upstream failures fail fast instead of hammering the dependency layer. The breakers trip after four consecutive failures and reset after the configured timeout window.
+
+Redis persists its data in a dedicated Docker volume mounted at `/data`, so cache entries survive container restarts. Nginx caches successful image responses and image `404` responses for `10m`. A cached `404` can remain until that negative-cache window expires if the asynchronous worker has not finished writing metadata.
 
 ## Features
 
@@ -62,7 +65,9 @@ Nginx caches successful image responses and image `404` responses for `10m`. A c
 - Redis-backed Asynq upload tasks.
 - SeaweedFS storage with imgproxy WebP delivery.
 - MongoDB persistence for image metadata with startup index creation.
+- Redis persistence via a dedicated Docker volume.
 - LRU and Redis metadata lookup layers.
+- Circuit breakers for MongoDB, Redis, SeaweedFS, and imgproxy.
 - Nginx response caching, upload/image rate limits, and Nmap blocking.
 
 ## Upload Workflows
@@ -137,9 +142,10 @@ GET /i/:id
 | HTTP API | Gin |
 | Authentication | JWT v5 and Ed25519 |
 | Queue | Asynq |
-| Shared metadata | Redis 7 |
+| Shared metadata | Redis 7 with persistent Docker volume |
 | Object storage | SeaweedFS |
 | Image transformation | imgproxy |
+| Resilience | gobreaker circuit breakers |
 | Public proxy/cache | Nginx |
 | Local orchestration | Docker Compose |
 

@@ -12,6 +12,10 @@
       (Added proxy_cache, response_cache zone, and X-Cache-Status header.)
 - [x] Add Nginx IP-based rate limiting, connection limits, request timeouts, and body-size limits.
       (Already present; unchanged – limit_req zones remain.)
+- [x] Add circuit breakers for MongoDB, Redis, SeaweedFS, and imgproxy.
+      (Breakers are initialized centrally and enabled around external dependency calls.)
+- [x] Persist Redis data with a Docker volume.
+      (Redis now mounts `redis_data:/data` in Docker Compose.)
 
 ## MongoDB
 
