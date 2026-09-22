@@ -37,11 +37,11 @@ services:
     container_name: twivo-media-redis
     restart: unless-stopped
     command: >
-      redis-server 
-      --appendonly no 
-      --save "" 
+      redis-server
       --tcp-keepalive 60
       --requirepass ${REDIS_PASS}
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -138,6 +138,7 @@ volumes:
   seaweed-filer-data:
   mongo_data:
   nginx-conf:
+  redis_data:
 
 networks:
   twivo-network:
