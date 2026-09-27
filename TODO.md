@@ -12,20 +12,21 @@
       (Added proxy_cache, response_cache zone, and X-Cache-Status header.)
 - [x] Add Nginx IP-based rate limiting, connection limits, request timeouts, and body-size limits.
       (Already present; unchanged – limit_req zones remain.)
-- [x] Add circuit breakers for MongoDB, Redis, SeaweedFS, and imgproxy.
-      (Breakers are initialized centrally and enabled around external dependency calls.)
+- [x] Add circuit breaker wrappers for MongoDB operations, Redis connection setup, and SeaweedFS uploads/cleanup.
+      (An imgproxy breaker is registered, but the image handler currently proxies directly.)
 - [x] Persist Redis data with a Docker volume.
-      (Redis now mounts `redis_data:/data` in Docker Compose.)
+      (AOF is enabled in the base/development Compose setup; dev and prod use named data volumes, while tests use temporary mounts.)
 
 ## MongoDB
 
 - [x] Add MongoDB to `docker-compose.yaml`.
 - [x] Store file URLs, owners, tweet IDs, MIME types, sizes, dimensions, and SeaweedFS paths.
 - [x] Store creation and update timestamps.
-- [x] Add indexes for file ID, owner ID, tweet ID, SHA-256, and pHash.
+- [x] Add indexes for NanoID, SHA-256 checksum, and pHash.
       (Startup creates `nano_id`, `check_sum`, and `phash` indexes.)
-- [x] Add MongoDB health checks and graceful startup handling.
-      (MongoDB connection and startup index creation now verify the client with a ping and fail fast on setup errors.)
+- [x] Verify MongoDB connectivity during application startup.
+      (Initialization pings MongoDB and creates indexes; startup fails on connection or index errors.)
+- [ ] Add a MongoDB Compose health check and gate API startup on it.
 
 ## Observability
 
@@ -101,6 +102,13 @@
 - [ ] Use a CDN or WAF for infrastructure‑level DDoS protection.
       (None of these were touched.)
 
+## Operations
+
+- [x] Add separate Make build and up targets for dev, test, and prod.
+- [x] Keep test service data ephemeral and make test cleanup explicit.
+- [x] Add a production volume backup target for MongoDB, Redis, and SeaweedFS.
+      (The target stops production and archives named volumes under `backups/production/`.)
+
 ## Documentation
 
 - [x] Update `README.md` after the OpenResty removal.
@@ -108,4 +116,4 @@
 - [x] Document upload and retrieval APIs.
 - [x] Document cache behavior, including the ten-minute negative image cache.
 - [ ] Document deletion APIs once file deletion is implemented.
-- [ ] Add deployment and backup instructions.
+- [x] Improve README setup, configuration, API, test, operations, and production-backup instructions.
