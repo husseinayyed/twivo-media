@@ -40,7 +40,6 @@ services:
       redis-server
       --tcp-keepalive 60
       --requirepass ${REDIS_PASS}
-      --appendonly yes
     volumes:
       - redis_data:/data
     healthcheck:
@@ -95,7 +94,7 @@ services:
   twivo-media:
     build:
       context: .
-      target: dev
+      target: ${APP_STAGE}
     logging: *default-logging
     restart: unless-stopped
     volumes:
@@ -135,11 +134,17 @@ services:
 
 volumes:
   seaweed-master-data:
+    name: twivo-media-prod-seaweed-master-data
   seaweed-volume-data:
+    name: twivo-media-prod-seaweed-volume-data
   seaweed-filer-data:
+    name: twivo-media-prod-seaweed-filer-data
   mongo_data:
+    name: twivo-media-prod-mongo-data
   nginx-conf:
+    name: twivo-media-prod-nginx-conf
   redis_data:
+    name: twivo-media-prod-redis-data
 
 networks:
   twivo-network:

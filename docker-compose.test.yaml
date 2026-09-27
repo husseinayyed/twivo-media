@@ -1,0 +1,49 @@
+x-logging: &test-logging
+  driver: json-file
+  options:
+    max-size: "5m"
+    max-file: "3"
+
+services:
+  nginx:
+    logging: *test-logging
+    volumes:
+      - type: tmpfs
+        target: /var/cache/nginx
+  mongodb:
+    logging: *test-logging
+    volumes:
+      - type: tmpfs
+        target: /data/db
+  redis:
+    logging: *test-logging
+    volumes:
+      - type: tmpfs
+        target: /data
+  weed-master:
+    logging: *test-logging
+    volumes:
+      - type: tmpfs
+        target: /data
+  weed-volume:
+    logging: *test-logging
+    volumes:
+      - type: tmpfs
+        target: /data
+  weed-filer:
+    logging: *test-logging
+    volumes:
+      - type: tmpfs
+        target: /data
+  twivo-media:
+    build:
+      target: dev
+    logging: *test-logging
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+
+  imgproxy:
+    logging: *test-logging
+

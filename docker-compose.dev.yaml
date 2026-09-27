@@ -1,8 +1,46 @@
+x-logging: &dev-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
+  nginx:
+    logging: *dev-logging
+  mongodb:
+    logging: *dev-logging
+  redis:
+    logging: *dev-logging
+    volumes:
+      - redis_data:/data
+  weed-master:
+    logging: *dev-logging
+  weed-volume:
+    logging: *dev-logging
+  weed-filer:
+    logging: *dev-logging
   twivo-media:
     build:
       target: dev
+    logging: *dev-logging
     volumes:
       - .:/app
     env_file:
       - .env
+
+  imgproxy:
+    logging: *dev-logging
+
+volumes:
+  seaweed-master-data:
+    name: twivo-media-dev-seaweed-master-data
+  seaweed-volume-data:
+    name: twivo-media-dev-seaweed-volume-data
+  seaweed-filer-data:
+    name: twivo-media-dev-seaweed-filer-data
+  mongo_data:
+    name: twivo-media-dev-mongo-data
+  nginx-conf:
+    name: twivo-media-dev-nginx-conf
+  redis_data:
+    name: twivo-media-dev-redis-data
