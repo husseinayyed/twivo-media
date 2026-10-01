@@ -41,7 +41,7 @@ Twivo Media is a Go image service for Twivo. It validates and streams image uplo
 | Metadata | Redis hash records and MongoDB image documents created by an embedded Asynq worker |
 | Delivery | imgproxy transforms originals into WebP |
 | Caching | Nginx response cache, process-local LRU, then Redis |
-| Resilience | Circuit breaker wrappers for MongoDB, Redis connection setup, and SeaweedFS uploads/cleanup |
+| Resilience | Circuit breakers protect MongoDB, Redis setup, SeaweedFS transfers, and imgproxy requests |
 
 ## Architecture
 
@@ -70,7 +70,7 @@ Uploads are streamed from the API to the SeaweedFS Filer. Image retrieval first 
 
 Nginx is only the public reverse proxy, cache, rate limiter, and user-agent filter. JWT validation is performed by the Go API.
 
-Circuit breakers wrap MongoDB operations, Redis connection setup, and SeaweedFS uploads and cleanup. They open after four consecutive failures and allow retries after the configured timeout. The image handler currently proxies to imgproxy directly.
+Circuit breakers protect MongoDB operations, Redis connection setup, SeaweedFS uploads and cleanup, and requests to imgproxy. The imgproxy breaker wraps the reverse proxy's HTTP transport, counts transport errors and upstream `5xx` responses as failures, and opens after four consecutive failures. It permits retries after a 15-second recovery timeout.
 
 Redis uses append-only persistence in the base/development Compose configuration and stores its data in named Docker volumes in development and production. The test Compose overlay uses temporary mounts for service data, which are discarded when the test containers are removed. Nginx caches successful image responses and image `404` responses for `10m`. A cached `404` can remain until that negative-cache window expires if the asynchronous worker has not finished writing metadata.
 
@@ -86,7 +86,8 @@ Redis uses append-only persistence in the base/development Compose configuration
 - MongoDB persistence for image metadata with startup index creation.
 - Redis persistence via a dedicated Docker volume.
 - LRU and Redis metadata lookup layers.
-- Circuit breaker wrappers for MongoDB, Redis connection setup, and SeaweedFS upload/cleanup.
+- LRU and Redis metadata lookup layers.
+- Circuit breakers for MongoDB, Redis connection setup, SeaweedFS upload/cleanup, and imgproxy requests.
 - Nginx response caching, upload/image rate limits, and Nmap blocking.
 
 ### Nginx Request Controls

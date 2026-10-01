@@ -13,7 +13,7 @@
 - [x] Add Nginx IP-based rate limiting, connection limits, request timeouts, and body-size limits.
       (Already present; unchanged – limit_req zones remain.)
 - [x] Add circuit breaker wrappers for MongoDB operations, Redis connection setup, and SeaweedFS uploads/cleanup.
-      (An imgproxy breaker is registered, but the image handler currently proxies directly.)
+- [x] Add circuit breaker wrappers for MongoDB operations, Redis connection setup, SeaweedFS uploads/cleanup, and imgproxy requests.
 - [x] Persist Redis data with a Docker volume.
       (AOF is enabled in the base/development Compose setup; dev and prod use named data volumes, while tests use temporary mounts.)
 
