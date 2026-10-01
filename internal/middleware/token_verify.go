@@ -2,8 +2,7 @@ package middleware
 
 import (
 	"crypto/ed25519"
-	"crypto/x509"
-	"encoding/pem"
+	"encoding/hex"
 	"errors"
 	"os"
 	"time"
@@ -18,7 +17,7 @@ import (
 var (
 	JWTIssuer          = os.Getenv("JWT_ISS")
 	JWTAudience        = os.Getenv("JWT_AUD")
-	PUBLIC_KEY_PATH    = os.Getenv("PUBLIC_KEY_PATH")
+	PUBLIC_KEY    = os.Getenv("PUBLIC_KEY")
 	ErrInvalidToken    = errors.New("the provided token is invalid")
 	tokenBlockDuration = 3 * time.Minute // 3 minutes in time.Duration nanoseconds
 
@@ -26,32 +25,22 @@ var (
 	PublicSigningKey ed25519.PublicKey
 )
 
+type VerifyClaims struct {
+	ImageID string `json:"id"`
+	jwt.RegisteredClaims
+}
+
 func init() {
-	if JWTIssuer == "" || JWTAudience == "" || PUBLIC_KEY_PATH == "" {
-		log.Fatal().Msg("one or more required environment variables (JWT_ISS, JWT_AUD, PUBLIC_KEY_PATH) are empty")
+	if JWTIssuer == "" || JWTAudience == "" || PUBLIC_KEY == "" {
+		log.Fatal().Msg("one or more required environment variables (JWT_ISS, JWT_AUD, PUBLIC_KEY) are empty")
 	}
 	// Read and parse your Ed25519 public key file
-	b, err := os.ReadFile(PUBLIC_KEY_PATH)
+	pubKeyBytes, err := hex.DecodeString(PUBLIC_KEY)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to read public_key.pem")
+		log.Fatal().Err(err).Msg("failed to decode public key")
 	}
-
-	block, _ := pem.Decode(b)
-	if block == nil {
-		log.Fatal().Msg("failed to decode valid PEM block from public key")
-	}
-
-	pubKeyRaw, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to parse PKIX public key")
-	}
-
 	// 3. Store the type-asserted key into your global variable
-	var ok bool
-	PublicSigningKey, ok = pubKeyRaw.(ed25519.PublicKey)
-	if !ok {
-		log.Fatal().Msg("key inside public_key.pem is not a valid Ed25519 public key")
-	}
+	PublicSigningKey = ed25519.PublicKey(pubKeyBytes)
 }
 func VerifyToken(c *gin.Context) {
 	tokenString := c.GetHeader("X-TWIVO-BACKEND")
@@ -66,39 +55,32 @@ func VerifyToken(c *gin.Context) {
 		return
 	}
 	cache.LruCacheToken.Add(tokenString, true) // Add the token to the cache to mark it as revoked
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+	claims := &VerifyClaims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
 			return nil, ErrInvalidToken
 		}
 		return PublicSigningKey, nil
-	})
+	},
+		jwt.WithValidMethods([]string{jwt.SigningMethodEdDSA.Alg()}),
+		jwt.WithIssuer(JWTIssuer),
+		jwt.WithAudience(JWTAudience),
+	)
 
-	if err != nil || !token.Valid {
+	if err != nil || token == nil || !token.Valid {
 		c.AbortWithStatusJSON(401, gin.H{"error": "Invalid token"})
 		return
 	}
-	tokenClaims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		c.AbortWithStatusJSON(401, gin.H{"error": "Invalid token claims"})
-		return
-	}
-	// 1. Safely extract and save all claims as strings
-	iss, _ := tokenClaims["iss"].(string)
-	aud, _ := tokenClaims["aud"].(string)
-	sub, _ := tokenClaims["sub"].(string)
-	jti, _ := tokenClaims["jti"].(string)
-	id, _ := tokenClaims["id"].(string)
-
-	if iss != JWTIssuer || aud != JWTAudience || aud == "" || sub == "" || jti == "" || id == "" {
+	if claims.Subject == "" || claims.ID == "" || claims.ImageID == "" {
 		c.AbortWithStatusJSON(401, gin.H{"error": "Invalid or missing token claims"})
 		return
 	}
-	if cache.LruCacheJTI.Contains(jti) {
+	if cache.LruCacheJTI.Contains(claims.ID) {
 		c.AbortWithStatusJSON(401, gin.H{"error": "Token has been revoked"})
 		return
 	}
 	// Set a 24-hour expiration for the JTI in Redis to prevent replay attacks
-	success, err := redis.RedisClient.SetNX(ctx, jti, "true", tokenBlockDuration).Result()
+	success, err := redis.RedisClient.SetNX(ctx, claims.ID, "true", tokenBlockDuration).Result()
 
 	if err != nil {
 		log.Error().Err(err).Msg("database connectivity error setting JTI registry")
@@ -110,7 +92,7 @@ func VerifyToken(c *gin.Context) {
 	if !success {
 		// If success is false, the JTI ALREADY existed in Redis.
 		// This means another instance or request already consumed it! Block it.
-		cache.LruCacheJTI.Add(jti, true)
+		cache.LruCacheJTI.Add(claims.ID, true)
 		cache.LruCacheToken.Add(tokenString, true)
 		c.AbortWithStatusJSON(401, gin.H{"error": "Token has already been consumed"})
 		return
@@ -119,10 +101,10 @@ func VerifyToken(c *gin.Context) {
 	// If success is true, Redis successfully saved the key, meaning it was a FRESH token.
 	// Sync the consumption status to local memory too
 	cache.LruCacheToken.Add(tokenString, true)
-	cache.LruCacheJTI.Add(jti, true)
+	cache.LruCacheJTI.Add(claims.ID, true)
 
-	c.Request.Header.Set("X-USER-ID", sub)
-	c.Request.Header.Set("X-TWEET-ID", id)
+	c.Request.Header.Set("X-USER-ID", claims.Subject)
+	c.Request.Header.Set("X-TWEET-ID", claims.ImageID)
 
 	c.Next()
 

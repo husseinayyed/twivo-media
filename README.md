@@ -29,7 +29,7 @@ Twivo Media is a Go image service for Twivo. It validates and streams image uplo
 
 - Docker Engine and Docker Compose v2
 - GNU Make
-- OpenSSL to generate the Ed25519 keys
+- Go to run the Ed25519 key generator and the API locally
 
 ## At A Glance
 
@@ -182,7 +182,7 @@ GET /i/:id
 
 ## Configuration
 
-Create `.env` from the example file in the project root, then replace the placeholder passwords:
+Create `.env` from the example file in the project root, then replace the placeholder values, including `PUBLIC_KEY`:
 
 ```bash
 cp .env.example .env
@@ -201,7 +201,7 @@ IMGPROXY_URL=http://imgproxy:8080
 WEED_FILER_URL=http://weed-filer:8888
 JWT_ISS=twivo
 JWT_AUD=media
-PUBLIC_KEY_PATH=/app/keys/public.pem
+PUBLIC_KEY=<hex-encoded-32-byte-ed25519-public-key>
 GIN_MODE=debug
 ```
 
@@ -217,29 +217,24 @@ GIN_MODE=debug
 | `WEED_FILER_URL` | Yes | SeaweedFS Filer URL |
 | `JWT_ISS` | Yes | Expected JWT issuer |
 | `JWT_AUD` | Yes | Expected JWT audience |
-| `PUBLIC_KEY_PATH` | Yes | Ed25519 public-key PEM path |
+| `PUBLIC_KEY` | Yes | Ed25519 public key as a hex-encoded 32-byte raw key (64 hex characters) |
 | `GIN_MODE` | No | Gin runtime mode, typically `debug`, `release`, or `test` |
 
-The app container reads these settings from `.env`. The API requires the JWT issuer, audience, and Ed25519 public-key path at startup. Before a production build, set `APP_STAGE=prod` in `.env`.
+The app container reads these settings from `.env`. The API requires the JWT issuer, audience, and public key at startup. Set `PUBLIC_KEY` to the generator's **Public Key** output, without the label. Before a production build, set `APP_STAGE=prod` in `.env`.
 
-Replace example passwords with strong values and keep `.env` and `keys/private.pem` out of version control.
+Replace example passwords with strong values and keep `.env` and the private key out of version control.
 
 MongoDB image metadata is stored in the `twivo.images` collection. Startup creates indexes for `nano_id`, `check_sum`, and `phash`.
 
 ### Generate Ed25519 Keys
 
-From the repository root, generate the private key locally and derive the public key used by the API:
+From the repository root, generate an Ed25519 key pair:
 
 ```bash
-./scripts/generate_keys.sh
+go run ./cmd/make-keys
 ```
 
-The script creates:
-
-- `keys/private.pem` for signing JWTs.
-- `keys/public.pem` for API verification through `PUBLIC_KEY_PATH`.
-
-The script checks that OpenSSL is installed, asks for confirmation before overwriting existing keys, and adds `keys/` to `.gitignore` automatically. Keep `keys/private.pem` on the trusted token-signing system and never expose it. The public key is safe to share and is required by the API. Use the private key when signing tokens for `X-TWIVO-BACKEND`.
+The command prints both keys as hex strings. Copy the **Public Key** value into `PUBLIC_KEY` in `.env`; it is the 32-byte Ed25519 public key encoded as 64 hex characters. Keep the **Private Key** value secret and use it only on the trusted system that signs JWTs for `X-TWIVO-BACKEND`. The generator prints the private key to the terminal and does not save either key to disk, so store the private key securely before closing the output.
 
 ## Run Locally
 
@@ -287,7 +282,7 @@ Then run the Go tests from the shell:
 go test ./...
 ```
 
-The test image can also be built and started separately with `make test-build` and `make test-up`. Use `make test-down` to stop the stack, or `make test-clean` to remove the containers and any remaining volumes. Running tests inside the container loads the project's `.env` and uses its mounted public key; a plain host-side `go test ./...` does not automatically load `.env`.
+The test image can also be built and started separately with `make test-build` and `make test-up`. Use `make test-down` to stop the stack, or `make test-clean` to remove the containers and any remaining volumes. Running tests inside the container loads the project's `.env`; a plain host-side `go test ./...` does not automatically load `.env`.
 
 ## Production and Data Backups
 
@@ -351,7 +346,7 @@ The API validates the JWT in `X-TWIVO-BACKEND`. It must contain:
 | `id` | tweet ID |
 | `jti` | unique token ID |
 
-The middleware takes the user ID from `sub` and tweet ID from `id`; callers do not need to send separate user/tweet headers. Each upload requires a fresh, unique `jti`.
+The middleware parses the JWT into typed claims: the user ID comes from `sub`, and the tweet/image ID comes from `id`. It validates the issuer and audience, and callers do not need to send separate user/tweet headers. Each upload requires a fresh, unique `jti`.
 
 The service checks the file signature (rather than trusting `Content-Type`), accepts JPEG, PNG, and WebP images, requires dimensions from `100x100` to `2048x2048`, and limits the request body to `20 MiB`.
 
@@ -408,6 +403,7 @@ Only Nginx publishes a host port. The other services communicate over the privat
 ├── internal/tasks/              # Asynq payloads and enqueueing
 ├── internal/utils/              # File type, dimensions, checksum logic
 ├── internal/worker/             # Embedded Asynq worker
+├── cmd/make-keys/               # Ed25519 key-pair generator
 ├── docs/screenshots/            # Upload and cache workflow screenshots
 ├── docker-compose.yaml
 ├── Dockerfile
@@ -419,7 +415,7 @@ Only Nginx publishes a host port. The other services communicate over the privat
 
 If an upload returns successfully but `GET /i/:id` returns `404`, check that the API log contains `Scheduled upload task` and that the worker is connected to the same Redis instance. The worker writes Redis metadata asynchronously, so a request can miss before processing completes. Nginx caches image `404` responses for up to 10 minutes; purge the Nginx cache or retry after that window expires.
 
-If host-side `go test ./...` exits during package initialization with a missing environment-variable or public-key error, run `make test-run` and execute `go test ./...` from the shell it opens. The container loads `.env` and mounts `keys/` at the configured path.
+If host-side `go test ./...` exits during package initialization with a missing environment-variable or public-key error, run `make test-run` and execute `go test ./...` from the shell it opens. The container loads `.env`; ensure `PUBLIC_KEY` contains a valid hex-encoded Ed25519 public key.
 
 ## License
 
