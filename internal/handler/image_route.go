@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/husseinayyed/twivo-media/internal/breaker"
 	"github.com/husseinayyed/twivo-media/internal/cache"
 	"github.com/husseinayyed/twivo-media/internal/database/mongodb"
 	"github.com/husseinayyed/twivo-media/internal/database/redis"
@@ -24,6 +25,34 @@ var (
 	WEED_FILER_URL = os.Getenv("WEED_FILER_URL")
 	imgproxyProxy  *httputil.ReverseProxy
 )
+
+type BreakerProxy struct {
+	Transport http.RoundTripper
+}
+
+func (bp *BreakerProxy) RoundTrip(req *http.Request) (*http.Response, error) {
+	result, err := breaker.ImgProxy.Execute(func() (any, error) {
+		resp, err := bp.Transport.RoundTrip(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode >= http.StatusInternalServerError {
+			resp.Body.Close()
+			log.Error().Int("status_code", resp.StatusCode).Msg("imgproxy returned 5xx error")
+			return nil, fmt.Errorf("imgproxy returned status %d", resp.StatusCode)
+		}
+		return resp, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp, ok := result.(*http.Response)
+	if !ok {
+		return nil, errors.New("imgproxy breaker returned invalid response")
+	}
+	return resp, nil
+}
 
 const internalServerErrorMessage = "Internal server error"
 
@@ -39,6 +68,7 @@ func init() {
 		Scheme: u.Scheme,
 		Host:   u.Host,
 	})
+	imgproxyProxy.Transport = &BreakerProxy{Transport: http.DefaultTransport}
 	imgproxyProxy.Director = func(req *http.Request) {
 		req.URL.Scheme = u.Scheme
 		req.URL.Host = u.Host
