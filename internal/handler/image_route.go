@@ -74,6 +74,14 @@ func init() {
 		req.URL.Host = u.Host
 		req.Header.Del("Accept-Encoding")
 	}
+	imgproxyProxy.ModifyResponse = func(resp *http.Response) error {
+		resp.Header.Set("X-Content-Type-Options", "nosniff")
+		if resp.StatusCode == http.StatusOK {
+			resp.Header.Set("Content-Type", "image/webp")
+			resp.Header.Set("Cache-Control", "public, max-age=600")
+		}
+		return nil
+	}
 }
 
 func ServeImageDirect(c *gin.Context, imageID string, v *cache.ImageResponse) {
